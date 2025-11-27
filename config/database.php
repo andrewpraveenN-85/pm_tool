@@ -2,8 +2,8 @@
 class Database {
     private $host = "localhost";
     private $db_name = "task_manager";
-    private $username = "root";
-    private $password = "";
+    private $username = "dbuser";
+    private $password = "L{582Phb1Lh5";
     public $conn;
 
     public function getConnection() {
