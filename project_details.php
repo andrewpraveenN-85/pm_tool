@@ -69,6 +69,21 @@ $stats = $stats_stmt->fetch(PDO::FETCH_ASSOC);
     <title><?= htmlspecialchars($project['name']) ?> - Task Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- TinyMCE WYSIWYG Editor -->
+    <script src="https://cdn.jsdelivr.net/npm/tinymce@6.8.2/tinymce.min.js"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        tinymce.init({
+            selector: 'textarea.wysiwyg',
+            plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
+            toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
+            menubar: false,
+            height: 300,
+            promotion: false,
+            branding: false
+        });
+    });
+    </script>
 </head>
 <body>
     <?php include 'includes/header.php'; ?>
@@ -87,7 +102,7 @@ $stats = $stats_stmt->fetch(PDO::FETCH_ASSOC);
                                     <?php endif; ?>
                                     <?= htmlspecialchars($project['name']) ?>
                                 </h2>
-                                <p class="lead"><?= htmlspecialchars($project['description']) ?></p>
+                                <div class="lead"><?= $project['description'] ?></div>
                                 
                                 <div class="row mt-3">
                                     <div class="col-md-6">
@@ -184,7 +199,7 @@ $stats = $stats_stmt->fetch(PDO::FETCH_ASSOC);
                                         <td>
                                             <strong><?= htmlspecialchars($task['name']) ?></strong>
                                             <?php if ($task['description']): ?>
-                                                <br><small class="text-muted"><?= substr(htmlspecialchars($task['description']), 0, 50) ?>...</small>
+                                                <br><small class="text-muted"><?= substr(strip_tags($task['description']), 0, 50) ?>...</small>
                                             <?php endif; ?>
                                         </td>
                                         <td>

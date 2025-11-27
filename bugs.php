@@ -17,22 +17,60 @@ if ($_POST) {
         $start_datetime = $_POST['start_datetime'];
         $end_datetime = $_POST['end_datetime'];
         
-        $query = "INSERT INTO bugs (name, description, task_id, priority, start_datetime, end_datetime, created_by) 
-                  VALUES (:name, :description, :task_id, :priority, :start_datetime, :end_datetime, :created_by)";
-        
-        $stmt = $db->prepare($query);
-        $stmt->bindParam(':name', $name);
-        $stmt->bindParam(':description', $description);
-        $stmt->bindParam(':task_id', $task_id);
-        $stmt->bindParam(':priority', $priority);
-        $stmt->bindParam(':start_datetime', $start_datetime);
-        $stmt->bindParam(':end_datetime', $end_datetime);
-        $stmt->bindParam(':created_by', $_SESSION['user_id']);
-        
-        if ($stmt->execute()) {
+        try {
+            $db->beginTransaction();
+            
+            $query = "INSERT INTO bugs (name, description, task_id, priority, start_datetime, end_datetime, created_by) 
+                      VALUES (:name, :description, :task_id, :priority, :start_datetime, :end_datetime, :created_by)";
+            
+            $stmt = $db->prepare($query);
+            $stmt->bindParam(':name', $name);
+            $stmt->bindParam(':description', $description);
+            $stmt->bindParam(':task_id', $task_id);
+            $stmt->bindParam(':priority', $priority);
+            $stmt->bindParam(':start_datetime', $start_datetime);
+            $stmt->bindParam(':end_datetime', $end_datetime);
+            $stmt->bindParam(':created_by', $_SESSION['user_id']);
+            $stmt->execute();
+            
+            $bug_id = $db->lastInsertId();
+            
+            // Handle file uploads for the bug
+            if (!empty($_FILES['attachments']['name'][0])) {
+                $upload_dir = 'uploads/bugs/' . $bug_id . '/';
+                if (!is_dir($upload_dir)) {
+                    mkdir($upload_dir, 0777, true);
+                }
+                
+                foreach ($_FILES['attachments']['tmp_name'] as $key => $tmp_name) {
+                    if ($_FILES['attachments']['error'][$key] === UPLOAD_ERR_OK) {
+                        $original_name = $_FILES['attachments']['name'][$key];
+                        $file_extension = pathinfo($original_name, PATHINFO_EXTENSION);
+                        $filename = 'bug_' . $bug_id . '_' . uniqid() . '.' . $file_extension;
+                        $target_file = $upload_dir . $filename;
+                        
+                        if (move_uploaded_file($tmp_name, $target_file)) {
+                            $query = "INSERT INTO attachments (entity_type, entity_id, filename, original_name, file_path, file_size, file_type, uploaded_by) 
+                                      VALUES ('bug', :entity_id, :filename, :original_name, :file_path, :file_size, :file_type, :uploaded_by)";
+                            $stmt = $db->prepare($query);
+                            $stmt->bindParam(':entity_id', $bug_id);
+                            $stmt->bindParam(':filename', $filename);
+                            $stmt->bindParam(':original_name', $original_name);
+                            $stmt->bindParam(':file_path', $target_file);
+                            $stmt->bindParam(':file_size', $_FILES['attachments']['size'][$key]);
+                            $stmt->bindParam(':file_type', $_FILES['attachments']['type'][$key]);
+                            $stmt->bindParam(':uploaded_by', $_SESSION['user_id']);
+                            $stmt->execute();
+                        }
+                    }
+                }
+            }
+            
+            $db->commit();
             $success = "Bug reported successfully!";
-        } else {
-            $error = "Failed to report bug!";
+        } catch (Exception $e) {
+            $db->rollBack();
+            $error = "Failed to report bug: " . $e->getMessage();
         }
     }
     
@@ -93,6 +131,21 @@ $tasks = $db->query("
     <title>Bugs - Task Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- TinyMCE WYSIWYG Editor -->
+    <script src="https://cdn.jsdelivr.net/npm/tinymce@6.8.2/tinymce.min.js"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        tinymce.init({
+            selector: 'textarea.wysiwyg',
+            plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
+            toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
+            menubar: false,
+            height: 300,
+            promotion: false,
+            branding: false
+        });
+    });
+    </script>
 </head>
 <body>
     <?php include 'includes/header.php'; ?>
@@ -127,16 +180,20 @@ $tasks = $db->query("
                                 <th>Reported By</th>
                                 <th>Start Date</th>
                                 <th>End Date</th>
+                                <th>Attachments</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($bugs as $bug): ?>
+                            <?php foreach ($bugs as $bug): 
+                                // Get attachments count for this bug
+                                $attachments_count = $db->query("SELECT COUNT(*) FROM attachments WHERE entity_type = 'bug' AND entity_id = " . $bug['id'])->fetchColumn();
+                            ?>
                             <tr>
                                 <td>
                                     <strong><?= htmlspecialchars($bug['name']) ?></strong>
                                     <?php if ($bug['description']): ?>
-                                        <br><small class="text-muted"><?= substr(htmlspecialchars($bug['description']), 0, 50) ?>...</small>
+                                        <br><small class="text-muted"><?= substr(strip_tags($bug['description']), 0, 50) ?>...</small>
                                     <?php endif; ?>
                                 </td>
                                 <td><?= htmlspecialchars($bug['task_name']) ?></td>
@@ -162,6 +219,15 @@ $tasks = $db->query("
                                 <td><?= htmlspecialchars($bug['created_by_name']) ?></td>
                                 <td><?= $bug['start_datetime'] ? date('M j, Y', strtotime($bug['start_datetime'])) : '-' ?></td>
                                 <td><?= $bug['end_datetime'] ? date('M j, Y', strtotime($bug['end_datetime'])) : '-' ?></td>
+                                <td>
+                                    <?php if ($attachments_count > 0): ?>
+                                        <span class="badge bg-info">
+                                            <i class="fas fa-paperclip"></i> <?= $attachments_count ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="text-muted">-</span>
+                                    <?php endif; ?>
+                                </td>
                                 <td>
                                     <div class="btn-group">
                                         <button class="btn btn-sm btn-outline-warning update-bug-status" 
@@ -191,7 +257,7 @@ $tasks = $db->query("
                     <h5 class="modal-title">Report New Bug</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form method="POST">
+                <form method="POST" enctype="multipart/form-data">
                     <div class="modal-body">
                         <div class="row">
                             <div class="col-md-6 mb-3">
@@ -213,7 +279,13 @@ $tasks = $db->query("
                         
                         <div class="mb-3">
                             <label class="form-label">Description</label>
-                            <textarea class="form-control" name="description" rows="3" required></textarea>
+                            <textarea class="form-control wysiwyg" name="description" required></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Attachments</label>
+                            <input type="file" class="form-control" name="attachments[]" multiple accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip">
+                            <small class="text-muted">You can select multiple files. Maximum 10MB per file.</small>
                         </div>
                         
                         <div class="row">

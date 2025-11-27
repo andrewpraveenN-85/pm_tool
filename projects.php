@@ -78,6 +78,21 @@ $projects = $db->query("
     <title>Projects - Task Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- TinyMCE WYSIWYG Editor -->
+    <script src="https://cdn.jsdelivr.net/npm/tinymce@6.8.2/tinymce.min.js"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        tinymce.init({
+            selector: 'textarea.wysiwyg',
+            plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
+            toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
+            menubar: false,
+            height: 300,
+            promotion: false,
+            branding: false
+        });
+    });
+    </script>
 </head>
 <body>
     <?php include 'includes/header.php'; ?>
@@ -117,7 +132,7 @@ $projects = $db->query("
                                     </span>
                                 </div>
                                 
-                                <p class="card-text"><?= htmlspecialchars($project['description']) ?></p>
+                                <div class="card-text"><?= $project['description'] ?></div>
                                 
                                 <?php if ($project['git_url']): ?>
                                 <p class="card-text">
@@ -172,7 +187,7 @@ $projects = $db->query("
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Description</label>
-                            <textarea class="form-control" name="description" rows="3"></textarea>
+                            <textarea class="form-control wysiwyg" name="description"></textarea>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Git Repository URL</label>
@@ -217,7 +232,7 @@ $projects = $db->query("
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Description</label>
-                            <textarea class="form-control" name="description" id="edit_project_description" rows="3"></textarea>
+                            <textarea class="form-control wysiwyg" name="description" id="edit_project_description"></textarea>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Git Repository URL</label>

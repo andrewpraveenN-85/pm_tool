@@ -1,18 +1,134 @@
 <?php
 include 'config/database.php';
 include 'includes/auth.php';
+include 'EmailService.php';
 
 $database = new Database();
 $db = $database->getConnection();
 $auth = new Auth($db);
 $auth->requireRole(['manager']);
 
+// Initialize EmailService
+$emailService = new EmailService($db);
+
+/**
+ * Get base URL for the application
+ */
+function getBaseUrl() {
+    $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'];
+    $scriptPath = dirname($_SERVER['SCRIPT_NAME']);
+    
+    return $protocol . '://' . $host . $scriptPath;
+}
+
+/**
+ * Send user creation email with access details
+ */
+function sendUserCreationEmail($name, $email, $password, $role, $status) {
+    global $emailService;
+    
+    if (!$emailService->isConfigured()) {
+        error_log("Email service not configured");
+        return false;
+    }
+    
+    $subject = "Your Task Manager Account Has Been Created";
+    
+    $message = "
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: #007bff; color: white; padding: 20px; text-align: center; }
+            .content { background: #f9f9f9; padding: 20px; border-radius: 5px; }
+            .credentials { background: #fff; padding: 15px; border-left: 4px solid #007bff; margin: 15px 0; }
+            .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
+            .button { background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; }
+        </style>
+    </head>
+    <body>
+        <div class='container'>
+            <div class='header'>
+                <h1>Task Manager Access</h1>
+            </div>
+            <div class='content'>
+                <h2>Hello $name,</h2>
+                <p>Your account has been successfully created in the Task Management System.</p>
+                
+                <div class='credentials'>
+                    <h3>Your Login Credentials:</h3>
+                    <p><strong>Email:</strong> $email</p>
+                    <p><strong>Password:</strong> $password</p>
+                    <p><strong>Role:</strong> " . ucfirst($role) . "</p>
+                    <p><strong>Status:</strong> " . ucfirst($status) . "</p>
+                </div>
+                
+                <p style=\"text-align: center;\">
+                    <a href=\"" . getBaseUrl() . "\" class=\"button\">Access Task Manager</a>
+                </p>
+                
+                <p><strong>Important Security Notes:</strong></p>
+                <ul>
+                    <li>Please change your password after first login for security</li>
+                    <li>Keep your login credentials secure and do not share them</li>
+                    <li>If you didn't request this account, please contact your manager immediately</li>
+                </ul>
+                
+                <p>You can access the system at: <a href=\"" . getBaseUrl() . "\">" . getBaseUrl() . "</a></p>
+            </div>
+            <div class='footer'>
+                <p>This is an automated message. Please do not reply to this email.</p>
+                <p>&copy; " . date('Y') . " Task Manager. All rights reserved.</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    ";
+    
+    // Plain text version for non-HTML email clients
+    $plainMessage = "
+    Task Manager Account Created
+    
+    Hello $name,
+    
+    Your account has been successfully created in the Task Management System.
+    
+    YOUR LOGIN CREDENTIALS:
+    Email: $email
+    Password: $password
+    Role: " . ucfirst($role) . "
+    Status: " . ucfirst($status) . "
+    
+    System URL: " . getBaseUrl() . "
+    
+    IMPORTANT SECURITY NOTES:
+    - Please change your password after first login for security
+    - Keep your login credentials secure and do not share them
+    - If you didn't request this account, please contact your manager immediately
+    
+    This is an automated message. Please do not reply to this email.
+    
+    © " . date('Y') . " Task Manager. All rights reserved.
+    ";
+    
+    try {
+        return $emailService->sendEmail($email, $subject, $message, true);
+    } catch (Exception $e) {
+        error_log("Email sending failed: " . $e->getMessage());
+        return false;
+    }
+}
+
 // Handle form submissions
 if ($_POST) {
     if (isset($_POST['create_user'])) {
         $name = $_POST['name'];
         $email = $_POST['email'];
-        $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
+        $plain_password = $_POST['password']; // Store plain password for email
+        $hashed_password = password_hash($plain_password, PASSWORD_DEFAULT);
         $role = $_POST['role'];
         $status = $_POST['status'];
         
@@ -22,13 +138,20 @@ if ($_POST) {
         $stmt = $db->prepare($query);
         $stmt->bindParam(':name', $name);
         $stmt->bindParam(':email', $email);
-        $stmt->bindParam(':password', $password);
+        $stmt->bindParam(':password', $hashed_password);
         $stmt->bindParam(':role', $role);
         $stmt->bindParam(':status', $status);
         $stmt->bindParam(':created_by', $_SESSION['user_id']);
         
         if ($stmt->execute()) {
-            $success = "User created successfully!";
+            // Send email notification with access details
+            $emailSent = sendUserCreationEmail($name, $email, $plain_password, $role, $status);
+            
+            if ($emailSent) {
+                $success = "User created successfully! Access details have been sent to the user's email.";
+            } else {
+                $success = "User created successfully! However, the email notification failed to send. Please notify the user manually with their credentials.";
+            }
         } else {
             $error = "Failed to create user!";
         }
@@ -106,9 +229,16 @@ $user_stats = $db->query("
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center mb-4">
                     <h2>User Management</h2>
-                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createUserModal">
-                        <i class="fas fa-user-plus"></i> Create User
-                    </button>
+                    <div>
+                        <?php if (!$emailService->isConfigured()): ?>
+                            <span class="badge bg-warning me-2" title="SMTP not configured - email notifications will not work">
+                                <i class="fas fa-exclamation-triangle"></i> Email Not Configured
+                            </span>
+                        <?php endif; ?>
+                        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createUserModal">
+                            <i class="fas fa-user-plus"></i> Create User
+                        </button>
+                    </div>
                 </div>
 
                 <?php if (isset($success)): ?>
@@ -221,6 +351,12 @@ $user_stats = $db->query("
                 </div>
                 <form method="POST">
                     <div class="modal-body">
+                        <?php if (!$emailService->isConfigured()): ?>
+                            <div class="alert alert-warning">
+                                <i class="fas fa-exclamation-triangle"></i> 
+                                SMTP is not configured. Email notifications will not be sent.
+                            </div>
+                        <?php endif; ?>
                         <div class="mb-3">
                             <label class="form-label">Full Name</label>
                             <input type="text" class="form-control" name="name" required>
@@ -232,6 +368,7 @@ $user_stats = $db->query("
                         <div class="mb-3">
                             <label class="form-label">Password</label>
                             <input type="password" class="form-control" name="password" required minlength="6">
+                            <small class="text-muted">This password will be sent to the user via email.</small>
                         </div>
                         <div class="row">
                             <div class="col-md-6 mb-3">
@@ -253,7 +390,9 @@ $user_stats = $db->query("
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                        <button type="submit" name="create_user" class="btn btn-primary">Create User</button>
+                        <button type="submit" name="create_user" class="btn btn-primary">
+                            <i class="fas fa-user-plus"></i> Create User
+                        </button>
                     </div>
                 </form>
             </div>

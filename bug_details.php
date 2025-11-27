@@ -33,17 +33,55 @@ if (!$bug) {
 if ($_POST && isset($_POST['add_comment'])) {
     $comment = $_POST['comment'];
     
-    $query = "INSERT INTO comments (entity_type, entity_id, user_id, comment) 
-              VALUES ('bug', :bug_id, :user_id, :comment)";
-    $stmt = $db->prepare($query);
-    $stmt->bindParam(':bug_id', $bug_id);
-    $stmt->bindParam(':user_id', $_SESSION['user_id']);
-    $stmt->bindParam(':comment', $comment);
-    
-    if ($stmt->execute()) {
+    try {
+        $db->beginTransaction();
+        
+        $query = "INSERT INTO comments (entity_type, entity_id, user_id, comment) 
+                  VALUES ('bug', :bug_id, :user_id, :comment)";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(':bug_id', $bug_id);
+        $stmt->bindParam(':user_id', $_SESSION['user_id']);
+        $stmt->bindParam(':comment', $comment);
+        $stmt->execute();
+        
+        $comment_id = $db->lastInsertId();
+        
+        // Handle file uploads for comment
+        if (!empty($_FILES['attachments']['name'][0])) {
+            $upload_dir = 'uploads/bugs/' . $bug_id . '/comments/';
+            if (!is_dir($upload_dir)) {
+                mkdir($upload_dir, 0777, true);
+            }
+            
+            foreach ($_FILES['attachments']['tmp_name'] as $key => $tmp_name) {
+                if ($_FILES['attachments']['error'][$key] === UPLOAD_ERR_OK) {
+                    $original_name = $_FILES['attachments']['name'][$key];
+                    $file_extension = pathinfo($original_name, PATHINFO_EXTENSION);
+                    $filename = 'comment_' . $comment_id . '_' . uniqid() . '.' . $file_extension;
+                    $target_file = $upload_dir . $filename;
+                    
+                    if (move_uploaded_file($tmp_name, $target_file)) {
+                        $query = "INSERT INTO attachments (entity_type, entity_id, filename, original_name, file_path, file_size, file_type, uploaded_by) 
+                                  VALUES ('comment', :entity_id, :filename, :original_name, :file_path, :file_size, :file_type, :uploaded_by)";
+                        $stmt = $db->prepare($query);
+                        $stmt->bindParam(':entity_id', $comment_id);
+                        $stmt->bindParam(':filename', $filename);
+                        $stmt->bindParam(':original_name', $original_name);
+                        $stmt->bindParam(':file_path', $target_file);
+                        $stmt->bindParam(':file_size', $_FILES['attachments']['size'][$key]);
+                        $stmt->bindParam(':file_type', $_FILES['attachments']['type'][$key]);
+                        $stmt->bindParam(':uploaded_by', $_SESSION['user_id']);
+                        $stmt->execute();
+                    }
+                }
+            }
+        }
+        
+        $db->commit();
         $success = "Comment added successfully!";
-    } else {
-        $error = "Failed to add comment!";
+    } catch (Exception $e) {
+        $db->rollBack();
+        $error = "Failed to add comment: " . $e->getMessage();
     }
 }
 
@@ -68,7 +106,7 @@ if ($_POST && isset($_POST['update_status'])) {
     }
 }
 
-// Get bug comments
+// Get bug comments with attachments
 $comments_query = "
     SELECT c.*, u.name as user_name, u.image as user_image 
     FROM comments c 
@@ -80,6 +118,41 @@ $comments_stmt = $db->prepare($comments_query);
 $comments_stmt->bindParam(':bug_id', $bug_id);
 $comments_stmt->execute();
 $comments = $comments_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Get attachments for comments
+$comment_attachments = [];
+if (!empty($comments)) {
+    $comment_ids = array_column($comments, 'id');
+    $placeholders = str_repeat('?,', count($comment_ids) - 1) . '?';
+    
+    $attachments_query = "
+        SELECT a.* 
+        FROM attachments a 
+        WHERE a.entity_type = 'comment' AND a.entity_id IN ($placeholders)
+        ORDER BY a.created_at DESC
+    ";
+    $attachments_stmt = $db->prepare($attachments_query);
+    $attachments_stmt->execute($comment_ids);
+    $attachments = $attachments_stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Group attachments by comment_id
+    foreach ($attachments as $attachment) {
+        $comment_attachments[$attachment['entity_id']][] = $attachment;
+    }
+}
+
+// Get bug attachments
+$bug_attachments_query = "
+    SELECT a.*, u.name as uploaded_by_name 
+    FROM attachments a 
+    LEFT JOIN users u ON a.uploaded_by = u.id 
+    WHERE a.entity_type = 'bug' AND a.entity_id = :bug_id 
+    ORDER BY a.created_at DESC
+";
+$bug_attachments_stmt = $db->prepare($bug_attachments_query);
+$bug_attachments_stmt->bindParam(':bug_id', $bug_id);
+$bug_attachments_stmt->execute();
+$bug_attachments = $bug_attachments_stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -89,6 +162,21 @@ $comments = $comments_stmt->fetchAll(PDO::FETCH_ASSOC);
     <title><?= htmlspecialchars($bug['name']) ?> - Task Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- TinyMCE WYSIWYG Editor -->
+    <script src="https://cdn.jsdelivr.net/npm/tinymce@6.8.2/tinymce.min.js"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        tinymce.init({
+            selector: 'textarea.wysiwyg',
+            plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
+            toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
+            menubar: false,
+            height: 300,
+            promotion: false,
+            branding: false
+        });
+    });
+    </script>
     <style>
         .bug-header {
             background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
@@ -101,6 +189,13 @@ $comments = $comments_stmt->fetchAll(PDO::FETCH_ASSOC);
             width: 40px;
             height: 40px;
             border-radius: 50%;
+        }
+        .attachment-item {
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 8px;
+            margin: 2px;
+            background: #f8f9fa;
         }
     </style>
 </head>
@@ -115,7 +210,7 @@ $comments = $comments_stmt->fetchAll(PDO::FETCH_ASSOC);
                     <div class="row">
                         <div class="col-md-8">
                             <h1><i class="fas fa-bug me-2"></i><?= htmlspecialchars($bug['name']) ?></h1>
-                            <p class="lead mb-0"><?= htmlspecialchars($bug['description']) ?></p>
+                            <div class="lead mb-0"><?= $bug['description'] ?></div>
                         </div>
                         <div class="col-md-4 text-end">
                             <span class="badge bg-light text-dark fs-6">
@@ -225,6 +320,40 @@ $comments = $comments_stmt->fetchAll(PDO::FETCH_ASSOC);
                             </div>
                         </div>
 
+                        <!-- Bug Attachments -->
+                        <?php if (!empty($bug_attachments)): ?>
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 class="mb-0">Bug Attachments</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <?php foreach ($bug_attachments as $attachment): ?>
+                                    <div class="col-md-6 mb-3">
+                                        <div class="attachment-item">
+                                            <div class="d-flex justify-content-between align-items-start">
+                                                <div>
+                                                    <h6 class="mb-1">
+                                                        <i class="fas fa-paperclip"></i>
+                                                        <?= htmlspecialchars($attachment['original_name']) ?>
+                                                    </h6>
+                                                    <small class="text-muted">
+                                                        <?= round($attachment['file_size'] / 1024, 1) ?> KB • 
+                                                        <?= $attachment['uploaded_by_name'] ?>
+                                                    </small>
+                                                </div>
+                                                <a href="download.php?id=<?= $attachment['id'] ?>" class="btn btn-sm btn-outline-primary">
+                                                    <i class="fas fa-download"></i>
+                                                </a>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        </div>
+                        <?php endif; ?>
+
                         <!-- Comments Section -->
                         <div class="card mb-4">
                             <div class="card-header">
@@ -232,10 +361,15 @@ $comments = $comments_stmt->fetchAll(PDO::FETCH_ASSOC);
                             </div>
                             <div class="card-body">
                                 <!-- Add Comment Form -->
-                                <form method="POST" class="mb-4">
+                                <form method="POST" class="mb-4" enctype="multipart/form-data">
                                     <div class="mb-3">
                                         <label class="form-label">Add Comment</label>
-                                        <textarea class="form-control" name="comment" rows="3" required placeholder="Enter your comment..."></textarea>
+                                        <textarea class="form-control wysiwyg" name="comment" required placeholder="Enter your comment..."></textarea>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Attachments</label>
+                                        <input type="file" class="form-control" name="attachments[]" multiple accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip">
+                                        <small class="text-muted">You can select multiple files. Maximum 10MB per file.</small>
                                     </div>
                                     <button type="submit" name="add_comment" class="btn btn-primary">Post Comment</button>
                                 </form>
@@ -254,7 +388,25 @@ $comments = $comments_stmt->fetchAll(PDO::FETCH_ASSOC);
                                                     <h6 class="mb-1"><?= htmlspecialchars($comment['user_name']) ?></h6>
                                                     <small class="text-muted"><?= date('M j, Y H:i', strtotime($comment['created_at'])) ?></small>
                                                 </div>
-                                                <p class="mb-1"><?= nl2br(htmlspecialchars($comment['comment'])) ?></p>
+                                                <div class="mb-1"><?= $comment['comment'] ?></div>
+                                                
+                                                <!-- Display attachments for this comment -->
+                                                <?php if (isset($comment_attachments[$comment['id']])): ?>
+                                                <div class="mt-2">
+                                                    <small class="text-muted">Attachments:</small>
+                                                    <div class="d-flex flex-wrap gap-2 mt-1">
+                                                        <?php foreach ($comment_attachments[$comment['id']] as $attachment): ?>
+                                                        <div class="attachment-item">
+                                                            <a href="download.php?id=<?= $attachment['id'] ?>" target="_blank" class="btn btn-sm btn-outline-secondary">
+                                                                <i class="fas fa-paperclip"></i> 
+                                                                <?= htmlspecialchars($attachment['original_name']) ?>
+                                                                <small>(<?= round($attachment['file_size'] / 1024, 1) ?> KB)</small>
+                                                            </a>
+                                                        </div>
+                                                        <?php endforeach; ?>
+                                                    </div>
+                                                </div>
+                                                <?php endif; ?>
                                             </div>
                                         </div>
                                         <?php endforeach; ?>
@@ -312,6 +464,10 @@ $comments = $comments_stmt->fetchAll(PDO::FETCH_ASSOC);
                                         echo $days . " days, " . $hours . " hours";
                                         ?>
                                     </p>
+                                </div>
+                                <div class="mb-3">
+                                    <small class="text-muted">Total Attachments</small>
+                                    <p class="mb-0"><?= count($bug_attachments) + array_reduce($comment_attachments, function($carry, $item) { return $carry + count($item); }, 0) ?></p>
                                 </div>
                             </div>
                         </div>

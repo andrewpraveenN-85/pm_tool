@@ -46,6 +46,37 @@ if ($_POST) {
                 $assign_stmt->execute();
             }
             
+            // Handle file uploads for the task
+            if (!empty($_FILES['attachments']['name'][0])) {
+                $upload_dir = 'uploads/tasks/' . $task_id . '/';
+                if (!is_dir($upload_dir)) {
+                    mkdir($upload_dir, 0777, true);
+                }
+                
+                foreach ($_FILES['attachments']['tmp_name'] as $key => $tmp_name) {
+                    if ($_FILES['attachments']['error'][$key] === UPLOAD_ERR_OK) {
+                        $original_name = $_FILES['attachments']['name'][$key];
+                        $file_extension = pathinfo($original_name, PATHINFO_EXTENSION);
+                        $filename = 'task_' . $task_id . '_' . uniqid() . '.' . $file_extension;
+                        $target_file = $upload_dir . $filename;
+                        
+                        if (move_uploaded_file($tmp_name, $target_file)) {
+                            $query = "INSERT INTO attachments (entity_type, entity_id, filename, original_name, file_path, file_size, file_type, uploaded_by) 
+                                      VALUES ('task', :entity_id, :filename, :original_name, :file_path, :file_size, :file_type, :uploaded_by)";
+                            $stmt = $db->prepare($query);
+                            $stmt->bindParam(':entity_id', $task_id);
+                            $stmt->bindParam(':filename', $filename);
+                            $stmt->bindParam(':original_name', $original_name);
+                            $stmt->bindParam(':file_path', $target_file);
+                            $stmt->bindParam(':file_size', $_FILES['attachments']['size'][$key]);
+                            $stmt->bindParam(':file_type', $_FILES['attachments']['type'][$key]);
+                            $stmt->bindParam(':uploaded_by', $_SESSION['user_id']);
+                            $stmt->execute();
+                        }
+                    }
+                }
+            }
+            
             $db->commit();
             $success = "Task created successfully!";
         } catch (Exception $e) {
@@ -60,12 +91,14 @@ if ($_SESSION['user_role'] == 'manager') {
     $tasks_query = "
         SELECT t.*, p.name as project_name, 
                GROUP_CONCAT(DISTINCT u.name) as assignee_names,
-               COUNT(DISTINCT b.id) as bug_count
+               COUNT(DISTINCT b.id) as bug_count,
+               COUNT(DISTINCT a.id) as attachment_count
         FROM tasks t
         LEFT JOIN projects p ON t.project_id = p.id
         LEFT JOIN task_assignments ta ON t.id = ta.task_id
         LEFT JOIN users u ON ta.user_id = u.id
         LEFT JOIN bugs b ON t.id = b.task_id
+        LEFT JOIN attachments a ON a.entity_type = 'task' AND a.entity_id = t.id
         GROUP BY t.id
         ORDER BY t.created_at DESC
     ";
@@ -74,12 +107,14 @@ if ($_SESSION['user_role'] == 'manager') {
     $tasks_query = "
         SELECT t.*, p.name as project_name, 
                GROUP_CONCAT(DISTINCT u.name) as assignee_names,
-               COUNT(DISTINCT b.id) as bug_count
+               COUNT(DISTINCT b.id) as bug_count,
+               COUNT(DISTINCT a.id) as attachment_count
         FROM tasks t
         LEFT JOIN projects p ON t.project_id = p.id
         LEFT JOIN task_assignments ta ON t.id = ta.task_id
         LEFT JOIN users u ON ta.user_id = u.id
         LEFT JOIN bugs b ON t.id = b.task_id
+        LEFT JOIN attachments a ON a.entity_type = 'task' AND a.entity_id = t.id
         WHERE ta.user_id = :user_id
         GROUP BY t.id
         ORDER BY t.created_at DESC
@@ -107,6 +142,21 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
     <title>Tasks - Task Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- TinyMCE WYSIWYG Editor -->
+    <script src="https://cdn.jsdelivr.net/npm/tinymce@6.8.2/tinymce.min.js"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        tinymce.init({
+            selector: 'textarea.wysiwyg',
+            plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
+            toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
+            menubar: false,
+            height: 300,
+            promotion: false,
+            branding: false
+        });
+    });
+    </script>
 </head>
 <body>
     <?php include 'includes/header.php'; ?>
@@ -145,6 +195,7 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
                                 <th>Start Date</th>
                                 <th>End Date</th>
                                 <th>Bugs</th>
+                                <th>Attachments</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
@@ -154,7 +205,7 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
                                 <td>
                                     <strong><?= htmlspecialchars($task['name']) ?></strong>
                                     <?php if ($task['description']): ?>
-                                        <br><small class="text-muted"><?= substr(htmlspecialchars($task['description']), 0, 50) ?>...</small>
+                                        <br><small class="text-muted"><?= substr(strip_tags($task['description']), 0, 50) ?>...</small>
                                     <?php endif; ?>
                                 </td>
                                 <td><?= htmlspecialchars($task['project_name']) ?></td>
@@ -204,6 +255,15 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
                                     <?php endif; ?>
                                 </td>
                                 <td>
+                                    <?php if ($task['attachment_count'] > 0): ?>
+                                        <span class="badge bg-info">
+                                            <i class="fas fa-paperclip"></i> <?= $task['attachment_count'] ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="text-muted">-</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
                                     <a href="task_details.php?id=<?= $task['id'] ?>" class="btn btn-sm btn-outline-primary">
                                         <i class="fas fa-eye"></i> View
                                     </a>
@@ -226,7 +286,7 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
                     <h5 class="modal-title">Create New Task</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form method="POST">
+                <form method="POST" enctype="multipart/form-data">
                     <div class="modal-body">
                         <div class="row">
                             <div class="col-md-6 mb-3">
@@ -246,7 +306,13 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
                         
                         <div class="mb-3">
                             <label class="form-label">Description</label>
-                            <textarea class="form-control" name="description" rows="3"></textarea>
+                            <textarea class="form-control wysiwyg" name="description"></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Attachments</label>
+                            <input type="file" class="form-control" name="attachments[]" multiple accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip">
+                            <small class="text-muted">You can select multiple files. Maximum 10MB per file.</small>
                         </div>
                         
                         <div class="row">

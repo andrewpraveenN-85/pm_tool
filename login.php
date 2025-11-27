@@ -6,11 +6,27 @@ $database = new Database();
 $db = $database->getConnection();
 $auth = new Auth($db);
 
+// Redirect to dashboard if already logged in
+if ($auth->isLoggedIn()) {
+    header("Location: dashboard.php");
+    exit;
+}
+
+// Check for remember me cookie
+if (isset($_COOKIE['remember_me']) && !$auth->isLoggedIn()) {
+    $token = $_COOKIE['remember_me'];
+    if ($auth->loginWithToken($token)) {
+        header("Location: dashboard.php");
+        exit;
+    }
+}
+
 if ($_POST) {
     $email = $_POST['email'];
     $password = $_POST['password'];
+    $remember_me = isset($_POST['remember_me']);
     
-    if ($auth->login($email, $password)) {
+    if ($auth->login($email, $password, $remember_me)) {
         header("Location: dashboard.php");
         exit;
     } else {
@@ -67,8 +83,16 @@ if ($_POST) {
                     <label for="password" class="form-label">Password</label>
                     <input type="password" class="form-control" id="password" name="password" required>
                 </div>
+                <div class="mb-3 form-check">
+                    <input type="checkbox" class="form-check-input" id="remember_me" name="remember_me">
+                    <label class="form-check-label" for="remember_me">Remember Me</label>
+                </div>
                 <button type="submit" class="btn btn-primary w-100">Sign In</button>
             </form>
+            
+            <div class="text-center mt-3">
+                <a href="forgot_password.php" class="text-decoration-none">Forgot Password?</a>
+            </div>
             
             <div class="text-center mt-3">
                 <small class="text-muted">
