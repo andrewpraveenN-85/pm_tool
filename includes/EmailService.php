@@ -1,17 +1,18 @@
 <?php
-// Include PHPMailer
-require_once __DIR__ . '/../vendor/autoload.php'; // If using Composer
-// Or if not using Composer, manually include PHPMailer files
+require_once __DIR__ . '/../vendor/autoload.php';
 
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
+use PHPMailer\PHPMailer\SMTP;
 
 class EmailService {
     private $conn;
     private $settings;
+    private $lastError;
 
     public function __construct($db) {
         $this->conn = $db;
+        $this->lastError = '';
         $this->loadSmtpSettings();
     }
 
@@ -20,6 +21,7 @@ class EmailService {
         $stmt = $this->conn->query($query);
         $settings = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+        $this->settings = [];
         foreach ($settings as $setting) {
             $this->settings[$setting['setting_key']] = $setting['setting_value'];
         }
@@ -31,9 +33,18 @@ class EmailService {
     }
 
     public function sendEmail($to, $subject, $message, $isHtml = true) {
+        $this->lastError = '';
+
         // Check if SMTP is configured
         if (empty($this->settings['smtp_host']) || empty($this->settings['smtp_username'])) {
-            error_log("SMTP not configured properly");
+            $this->lastError = "SMTP not configured properly";
+            error_log("SMTP not configured: Host or username missing");
+            return false;
+        }
+
+        // Validate email format
+        if (!filter_var($to, FILTER_VALIDATE_EMAIL)) {
+            $this->lastError = "Invalid recipient email address: " . $to;
             return false;
         }
 
@@ -47,14 +58,22 @@ class EmailService {
             $mail->SMTPAuth = true;
             $mail->Username = $this->settings['smtp_username'];
             $mail->Password = $this->settings['smtp_password'];
-            $mail->SMTPSecure = $this->settings['smtp_encryption'];
-            $mail->Port = $this->settings['smtp_port'];
+            $mail->SMTPSecure = $this->getEncryptionMethod();
+            $mail->Port = $this->settings['smtp_port'] ?: 587;
+            
+            // Timeout settings
+            $mail->Timeout = 30;
+            $mail->SMTPKeepAlive = true;
 
             // Recipients
-            $mail->setFrom(
-                $this->settings['smtp_from_email'] ?: $this->settings['smtp_username'],
-                $this->settings['smtp_from_name'] ?: 'Task Manager'
-            );
+            $fromEmail = $this->settings['smtp_from_email'] ?: $this->settings['smtp_username'];
+            $fromName = $this->settings['smtp_from_name'] ?: 'Task Manager';
+            
+            if (!filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
+                throw new Exception("Invalid from email address: " . $fromEmail);
+            }
+            
+            $mail->setFrom($fromEmail, $fromName);
             $mail->addAddress($to);
 
             // Content
@@ -66,10 +85,36 @@ class EmailService {
                 $mail->AltBody = strip_tags($message);
             }
 
-            return $mail->send();
+            // Add custom headers
+            $mail->addCustomHeader('X-Mailer', 'TaskManager PHP');
+            
+            $result = $mail->send();
+            
+            if (!$result) {
+                $this->lastError = $mail->ErrorInfo;
+            }
+            
+            return $result;
+            
         } catch (Exception $e) {
-            error_log("Email sending failed: " . $e->getMessage());
+            $this->lastError = $e->getMessage();
+            error_log("Email sending failed: " . $this->lastError);
             return false;
+        }
+    }
+
+    private function getEncryptionMethod() {
+        $encryption = strtolower($this->settings['smtp_encryption'] ?? 'tls');
+        
+        switch ($encryption) {
+            case 'ssl':
+                return PHPMailer::ENCRYPTION_SMTPS;
+            case 'tls':
+                return PHPMailer::ENCRYPTION_STARTTLS;
+            case 'none':
+                return '';
+            default:
+                return PHPMailer::ENCRYPTION_STARTTLS;
         }
     }
 
@@ -77,6 +122,38 @@ class EmailService {
         return !empty($this->settings['smtp_host']) && 
                !empty($this->settings['smtp_username']) && 
                !empty($this->settings['smtp_password']);
+    }
+
+    public function getLastError() {
+        return $this->lastError;
+    }
+
+    public function testConnection() {
+        if (!$this->isConfigured()) {
+            return false;
+        }
+
+        $mail = new PHPMailer(true);
+        
+        try {
+            $mail->isSMTP();
+            $mail->Host = $this->settings['smtp_host'];
+            $mail->SMTPAuth = true;
+            $mail->Username = $this->settings['smtp_username'];
+            $mail->Password = $this->settings['smtp_password'];
+            $mail->SMTPSecure = $this->getEncryptionMethod();
+            $mail->Port = $this->settings['smtp_port'] ?: 587;
+            $mail->Timeout = 10;
+            
+            return $mail->smtpConnect();
+        } catch (Exception $e) {
+            $this->lastError = $e->getMessage();
+            return false;
+        } finally {
+            if ($mail) {
+                $mail->smtpClose();
+            }
+        }
     }
 }
 ?>

@@ -1,11 +1,15 @@
 <?php
 include 'config/database.php';
 include 'includes/auth.php';
+include 'includes/notifications.php';
 
 $database = new Database();
 $db = $database->getConnection();
 $auth = new Auth($db);
 $auth->requireAuth();
+
+// Initialize notification service
+$notification = new Notification($db);
 
 // Handle form submissions
 if ($_POST) {
@@ -22,8 +26,8 @@ if ($_POST) {
             $db->beginTransaction();
             
             // Insert task
-            $query = "INSERT INTO tasks (name, description, project_id, priority, start_datetime, end_datetime, created_by) 
-                      VALUES (:name, :description, :project_id, :priority, :start_datetime, :end_datetime, :created_by)";
+            $query = "INSERT INTO tasks (name, description, project_id, priority, start_datetime, end_datetime, created_by, status) 
+                      VALUES (:name, :description, :project_id, :priority, :start_datetime, :end_datetime, :created_by, 'pending')";
             
             $stmt = $db->prepare($query);
             $stmt->bindParam(':name', $name);
@@ -78,10 +82,60 @@ if ($_POST) {
             }
             
             $db->commit();
+            
+            // Send assignment notifications and emails
+            if (!empty($assignees)) {
+                $notification->createTaskAssignmentNotification($task_id, $assignees);
+            }
+            
             $success = "Task created successfully!";
         } catch (Exception $e) {
             $db->rollBack();
             $error = "Failed to create task: " . $e->getMessage();
+        }
+    }
+    
+    // Handle task status update
+    if (isset($_POST['update_task_status'])) {
+        $task_id = $_POST['task_id'];
+        $status = $_POST['status'];
+        
+        try {
+            $db->beginTransaction();
+            
+            // Get current task details
+            $task_query = "SELECT created_by FROM tasks WHERE id = :task_id";
+            $task_stmt = $db->prepare($task_query);
+            $task_stmt->bindParam(':task_id', $task_id);
+            $task_stmt->execute();
+            $task = $task_stmt->fetch(PDO::FETCH_ASSOC);
+            
+            // Get assigned users
+            $assignees_query = "SELECT user_id FROM task_assignments WHERE task_id = :task_id";
+            $assignees_stmt = $db->prepare($assignees_query);
+            $assignees_stmt->bindParam(':task_id', $task_id);
+            $assignees_stmt->execute();
+            $assignees = $assignees_stmt->fetchAll(PDO::FETCH_COLUMN);
+            
+            // Update task status
+            $query = "UPDATE tasks SET status = :status, updated_at = NOW() WHERE id = :id";
+            $stmt = $db->prepare($query);
+            $stmt->bindParam(':status', $status);
+            $stmt->bindParam(':id', $task_id);
+            
+            if ($stmt->execute()) {
+                $db->commit();
+                
+                // Send status update notifications
+                $notification->createTaskStatusUpdateNotification($task_id, $status, $assignees, $task['created_by']);
+                
+                $success = "Task status updated successfully!";
+            } else {
+                throw new Exception("Failed to update task status");
+            }
+        } catch (Exception $e) {
+            $db->rollBack();
+            $error = "Failed to update task status: " . $e->getMessage();
         }
     }
 }
@@ -91,6 +145,7 @@ if ($_SESSION['user_role'] == 'manager') {
     $tasks_query = "
         SELECT t.*, p.name as project_name, 
                GROUP_CONCAT(DISTINCT u.name) as assignee_names,
+               GROUP_CONCAT(DISTINCT u.id) as assignee_ids,
                COUNT(DISTINCT b.id) as bug_count,
                COUNT(DISTINCT a.id) as attachment_count
         FROM tasks t
@@ -107,6 +162,7 @@ if ($_SESSION['user_role'] == 'manager') {
     $tasks_query = "
         SELECT t.*, p.name as project_name, 
                GROUP_CONCAT(DISTINCT u.name) as assignee_names,
+               GROUP_CONCAT(DISTINCT u.id) as assignee_ids,
                COUNT(DISTINCT b.id) as bug_count,
                COUNT(DISTINCT a.id) as attachment_count
         FROM tasks t
@@ -142,7 +198,6 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
     <title>Tasks - Task Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <!-- TinyMCE WYSIWYG Editor -->
     <script src="https://cdn.jsdelivr.net/npm/tinymce@6.8.2/tinymce.min.js"></script>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -219,7 +274,11 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
                                     </span>
                                 </td>
                                 <td>
-                                    <span class="badge bg-secondary">
+                                    <span class="badge bg-<?= 
+                                        $task['status'] == 'completed' ? 'success' : 
+                                        ($task['status'] == 'in_progress' ? 'primary' : 
+                                        ($task['status'] == 'pending' ? 'warning' : 'secondary')) 
+                                    ?>">
                                         <?= ucfirst(str_replace('_', ' ', $task['status'])) ?>
                                     </span>
                                 </td>
@@ -264,9 +323,18 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <a href="task_details.php?id=<?= $task['id'] ?>" class="btn btn-sm btn-outline-primary">
-                                        <i class="fas fa-eye"></i> View
-                                    </a>
+                                    <div class="btn-group">
+                                        <?php if ($_SESSION['user_role'] == 'manager' || in_array($_SESSION['user_id'], explode(',', $task['assignee_ids'] ?? ''))): ?>
+                                        <button class="btn btn-sm btn-outline-warning update-task-status" 
+                                                data-task-id="<?= $task['id'] ?>" 
+                                                data-current-status="<?= $task['status'] ?>">
+                                            <i class="fas fa-sync"></i> Status
+                                        </button>
+                                        <?php endif; ?>
+                                        <a href="task_details.php?id=<?= $task['id'] ?>" class="btn btn-sm btn-outline-primary">
+                                            <i class="fas fa-eye"></i> View
+                                        </a>
+                                    </div>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
@@ -357,11 +425,54 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
     </div>
     <?php endif; ?>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-<footer class="bg-dark text-light text-center py-3 mt-5">
-    <div class="container">
-        <p class="mb-0">Developed by APNLAB. 2025.</p>
+    <!-- Update Task Status Modal -->
+    <div class="modal fade" id="updateTaskStatusModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Update Task Status</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <form method="POST">
+                    <input type="hidden" name="task_id" id="update_task_id">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">Status</label>
+                            <select class="form-select" name="status" id="update_task_status" required>
+                                <option value="pending">Pending</option>
+                                <option value="in_progress">In Progress</option>
+                                <option value="completed">Completed</option>
+                                <option value="cancelled">Cancelled</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        <button type="submit" name="update_task_status" class="btn btn-primary">Update Status</button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
-</footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const updateButtons = document.querySelectorAll('.update-task-status');
+            const updateModal = new bootstrap.Modal(document.getElementById('updateTaskStatusModal'));
+            
+            updateButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const taskId = this.dataset.taskId;
+                    const currentStatus = this.dataset.currentStatus;
+                    
+                    document.getElementById('update_task_id').value = taskId;
+                    document.getElementById('update_task_status').value = currentStatus;
+                    
+                    updateModal.show();
+                });
+            });
+        });
+    </script>
+</body>
 </html>

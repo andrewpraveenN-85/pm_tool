@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Nov 27, 2025 at 05:55 AM
+-- Generation Time: Nov 27, 2025 at 12:16 PM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -36,6 +36,25 @@ CREATE TABLE `activity_logs` (
   `details` text DEFAULT NULL,
   `ip_address` varchar(45) DEFAULT NULL,
   `user_agent` text DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `attachments`
+--
+
+CREATE TABLE `attachments` (
+  `id` int(11) NOT NULL,
+  `entity_type` enum('task','bug','comment') NOT NULL,
+  `entity_id` int(11) NOT NULL,
+  `filename` varchar(255) NOT NULL,
+  `original_name` varchar(255) NOT NULL,
+  `file_path` varchar(500) NOT NULL,
+  `file_size` int(11) NOT NULL,
+  `file_type` varchar(100) NOT NULL,
+  `uploaded_by` int(11) NOT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -86,8 +105,22 @@ CREATE TABLE `notifications` (
   `user_id` int(11) NOT NULL,
   `title` varchar(255) NOT NULL,
   `message` text NOT NULL,
-  `type` enum('deadline','assignment','update') NOT NULL,
+  `type` enum('assignment','status_update','deadline','bug_report','bug_status_update') DEFAULT NULL,
   `is_read` tinyint(1) DEFAULT 0,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `password_resets`
+--
+
+CREATE TABLE `password_resets` (
+  `id` int(11) NOT NULL,
+  `email` varchar(255) NOT NULL,
+  `token` varchar(64) NOT NULL,
+  `expires_at` datetime NOT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -107,6 +140,28 @@ CREATE TABLE `projects` (
   `created_by` int(11) NOT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Dumping data for table `projects`
+--
+
+INSERT INTO `projects` (`id`, `name`, `icon`, `description`, `git_url`, `status`, `created_by`, `created_at`, `updated_at`) VALUES
+(1, 'test', '', 'trd', '', 'active', 1, '2025-11-27 06:28:47', '2025-11-27 06:28:47');
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `remember_me_tokens`
+--
+
+CREATE TABLE `remember_me_tokens` (
+  `id` int(11) NOT NULL,
+  `selector` varchar(24) NOT NULL,
+  `validator_hash` varchar(64) NOT NULL,
+  `user_id` int(11) NOT NULL,
+  `expires_at` datetime NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -162,6 +217,13 @@ CREATE TABLE `tasks` (
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+--
+-- Dumping data for table `tasks`
+--
+
+INSERT INTO `tasks` (`id`, `project_id`, `name`, `description`, `status`, `priority`, `attachments`, `start_datetime`, `end_datetime`, `created_by`, `created_at`, `updated_at`) VALUES
+(1, 1, 'tasj', 'task', 'todo', 'medium', NULL, '0000-00-00 00:00:00', '0000-00-00 00:00:00', 1, '2025-11-27 06:29:10', '2025-11-27 06:29:10');
+
 -- --------------------------------------------------------
 
 --
@@ -212,12 +274,24 @@ ALTER TABLE `activity_logs`
   ADD KEY `idx_activity_logs_user_date` (`user_id`,`created_at`);
 
 --
+-- Indexes for table `attachments`
+--
+ALTER TABLE `attachments`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `uploaded_by` (`uploaded_by`);
+
+--
 -- Indexes for table `bugs`
 --
 ALTER TABLE `bugs`
   ADD PRIMARY KEY (`id`),
   ADD KEY `created_by` (`created_by`),
-  ADD KEY `idx_bugs_task_status` (`task_id`,`status`);
+  ADD KEY `idx_bugs_task_status` (`task_id`,`status`),
+  ADD KEY `idx_bugs_task_id` (`task_id`),
+  ADD KEY `idx_bugs_status` (`status`),
+  ADD KEY `idx_bugs_priority` (`priority`),
+  ADD KEY `idx_bugs_created_at` (`created_at`),
+  ADD KEY `idx_bugs_end_datetime` (`end_datetime`);
 
 --
 -- Indexes for table `comments`
@@ -232,7 +306,18 @@ ALTER TABLE `comments`
 --
 ALTER TABLE `notifications`
   ADD PRIMARY KEY (`id`),
-  ADD KEY `user_id` (`user_id`);
+  ADD KEY `idx_notifications_user_id` (`user_id`),
+  ADD KEY `idx_notifications_is_read` (`is_read`),
+  ADD KEY `idx_notifications_created_at` (`created_at`);
+
+--
+-- Indexes for table `password_resets`
+--
+ALTER TABLE `password_resets`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `token` (`token`),
+  ADD KEY `expires_at` (`expires_at`),
+  ADD KEY `email` (`email`);
 
 --
 -- Indexes for table `projects`
@@ -242,11 +327,21 @@ ALTER TABLE `projects`
   ADD KEY `created_by` (`created_by`);
 
 --
+-- Indexes for table `remember_me_tokens`
+--
+ALTER TABLE `remember_me_tokens`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `user_id` (`user_id`),
+  ADD KEY `selector` (`selector`),
+  ADD KEY `expires_at` (`expires_at`);
+
+--
 -- Indexes for table `settings`
 --
 ALTER TABLE `settings`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `setting_key` (`setting_key`);
+  ADD UNIQUE KEY `setting_key` (`setting_key`),
+  ADD KEY `idx_settings_key` (`setting_key`);
 
 --
 -- Indexes for table `tasks`
@@ -255,7 +350,9 @@ ALTER TABLE `tasks`
   ADD PRIMARY KEY (`id`),
   ADD KEY `created_by` (`created_by`),
   ADD KEY `idx_tasks_project_status` (`project_id`,`status`),
-  ADD KEY `idx_tasks_priority_status` (`priority`,`status`);
+  ADD KEY `idx_tasks_priority_status` (`priority`,`status`),
+  ADD KEY `idx_tasks_status` (`status`),
+  ADD KEY `idx_tasks_end_datetime` (`end_datetime`);
 
 --
 -- Indexes for table `task_assignments`
@@ -284,6 +381,12 @@ ALTER TABLE `activity_logs`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `attachments`
+--
+ALTER TABLE `attachments`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `bugs`
 --
 ALTER TABLE `bugs`
@@ -302,22 +405,34 @@ ALTER TABLE `notifications`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `password_resets`
+--
+ALTER TABLE `password_resets`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `projects`
 --
 ALTER TABLE `projects`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+
+--
+-- AUTO_INCREMENT for table `remember_me_tokens`
+--
+ALTER TABLE `remember_me_tokens`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT for table `settings`
 --
 ALTER TABLE `settings`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=25;
 
 --
 -- AUTO_INCREMENT for table `tasks`
 --
 ALTER TABLE `tasks`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT for table `task_assignments`
@@ -340,6 +455,12 @@ ALTER TABLE `users`
 --
 ALTER TABLE `activity_logs`
   ADD CONSTRAINT `activity_logs_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`);
+
+--
+-- Constraints for table `attachments`
+--
+ALTER TABLE `attachments`
+  ADD CONSTRAINT `attachments_ibfk_1` FOREIGN KEY (`uploaded_by`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `bugs`
@@ -365,6 +486,12 @@ ALTER TABLE `notifications`
 --
 ALTER TABLE `projects`
   ADD CONSTRAINT `projects_ibfk_1` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`);
+
+--
+-- Constraints for table `remember_me_tokens`
+--
+ALTER TABLE `remember_me_tokens`
+  ADD CONSTRAINT `remember_me_tokens_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `tasks`

@@ -7,13 +7,14 @@ $db = $database->getConnection();
 
 $notification = new Notification($db);
 
+// Check all types of notifications
 $task_count = $notification->checkDeadlineNotifications();
 $bug_count = $notification->checkOverdueBugs();
 
-echo "Cron job executed at " . date('Y-m-d H:i:s') . "\n";
-echo "Found {$task_count} tasks approaching deadline\n";
-echo "Found {$bug_count} overdue bugs\n";
+echo "Daily notification check at " . date('Y-m-d H:i:s') . "\n";
+echo "Tasks approaching deadline: {$task_count}\n";
+echo "Overdue bugs: {$bug_count}\n";
 
 // Log the execution
-error_log("Deadline cron executed: {$task_count} tasks, {$bug_count} bugs");
+error_log("Daily notification check: {$task_count} tasks, {$bug_count} bugs");
 ?>

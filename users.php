@@ -1,7 +1,7 @@
 <?php
 include 'config/database.php';
 include 'includes/auth.php';
-include 'EmailService.php';
+include 'includes/EmailService.php';
 
 $database = new Database();
 $db = $database->getConnection();

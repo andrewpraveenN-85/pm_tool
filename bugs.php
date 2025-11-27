@@ -1,11 +1,15 @@
 <?php
 include 'config/database.php';
 include 'includes/auth.php';
+include 'includes/notifications.php';
 
 $database = new Database();
 $db = $database->getConnection();
 $auth = new Auth($db);
 $auth->requireRole(['manager', 'qa']);
+
+// Initialize notification service
+$notification = new Notification($db);
 
 // Handle form submissions
 if ($_POST) {
@@ -14,20 +18,22 @@ if ($_POST) {
         $description = $_POST['description'];
         $task_id = $_POST['task_id'];
         $priority = $_POST['priority'];
+        $status = $_POST['status'];
         $start_datetime = $_POST['start_datetime'];
         $end_datetime = $_POST['end_datetime'];
         
         try {
             $db->beginTransaction();
             
-            $query = "INSERT INTO bugs (name, description, task_id, priority, start_datetime, end_datetime, created_by) 
-                      VALUES (:name, :description, :task_id, :priority, :start_datetime, :end_datetime, :created_by)";
+            $query = "INSERT INTO bugs (name, description, task_id, priority, status, start_datetime, end_datetime, created_by) 
+                      VALUES (:name, :description, :task_id, :priority, :status, :start_datetime, :end_datetime, :created_by)";
             
             $stmt = $db->prepare($query);
             $stmt->bindParam(':name', $name);
             $stmt->bindParam(':description', $description);
             $stmt->bindParam(':task_id', $task_id);
             $stmt->bindParam(':priority', $priority);
+            $stmt->bindParam(':status', $status);
             $stmt->bindParam(':start_datetime', $start_datetime);
             $stmt->bindParam(':end_datetime', $end_datetime);
             $stmt->bindParam(':created_by', $_SESSION['user_id']);
@@ -67,6 +73,10 @@ if ($_POST) {
             }
             
             $db->commit();
+            
+            // Send bug report notification
+            $notification->createBugReportNotification($bug_id);
+            
             $success = "Bug reported successfully!";
         } catch (Exception $e) {
             $db->rollBack();
@@ -78,15 +88,46 @@ if ($_POST) {
         $bug_id = $_POST['bug_id'];
         $status = $_POST['status'];
         
-        $query = "UPDATE bugs SET status = :status, updated_at = NOW() WHERE id = :id";
-        $stmt = $db->prepare($query);
-        $stmt->bindParam(':status', $status);
-        $stmt->bindParam(':id', $bug_id);
-        
-        if ($stmt->execute()) {
-            $success = "Bug status updated successfully!";
-        } else {
-            $error = "Failed to update bug status!";
+        try {
+            $db->beginTransaction();
+            
+            // Get bug details for notification
+            $bug_query = "
+                SELECT b.name, b.priority, b.task_id, t.created_by as task_manager_id, 
+                       GROUP_CONCAT(DISTINCT ta.user_id) as assignee_ids
+                FROM bugs b
+                LEFT JOIN tasks t ON b.task_id = t.id
+                LEFT JOIN task_assignments ta ON t.id = ta.task_id
+                WHERE b.id = :bug_id
+                GROUP BY b.id
+            ";
+            $bug_stmt = $db->prepare($bug_query);
+            $bug_stmt->bindParam(':bug_id', $bug_id);
+            $bug_stmt->execute();
+            $bug = $bug_stmt->fetch(PDO::FETCH_ASSOC);
+            
+            // Update bug status
+            $query = "UPDATE bugs SET status = :status, updated_at = NOW() WHERE id = :id";
+            $stmt = $db->prepare($query);
+            $stmt->bindParam(':status', $status);
+            $stmt->bindParam(':id', $bug_id);
+            
+            if ($stmt->execute()) {
+                $db->commit();
+                
+                // Send bug status update notification
+                if ($bug) {
+                    $assignee_ids = !empty($bug['assignee_ids']) ? explode(',', $bug['assignee_ids']) : [];
+                    $notification->createBugStatusUpdateNotification($bug_id, $status, $assignee_ids, $bug['task_manager_id']);
+                }
+                
+                $success = "Bug status updated successfully!";
+            } else {
+                throw new Exception("Failed to update bug status");
+            }
+        } catch (Exception $e) {
+            $db->rollBack();
+            $error = "Failed to update bug status: " . $e->getMessage();
         }
     }
 }
@@ -102,7 +143,6 @@ if ($_SESSION['user_role'] == 'manager') {
         ORDER BY b.created_at DESC
     ";
 } else {
-    // For QA, show all bugs
     $bugs_query = "
         SELECT b.*, t.name as task_name, p.name as project_name, u.name as created_by_name
         FROM bugs b
@@ -120,7 +160,7 @@ $tasks = $db->query("
     SELECT t.id, t.name, p.name as project_name 
     FROM tasks t 
     LEFT JOIN projects p ON t.project_id = p.id 
-    WHERE t.status != 'closed'
+    WHERE t.status != 'closed' AND t.status != 'completed'
 ")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
@@ -131,7 +171,6 @@ $tasks = $db->query("
     <title>Bugs - Task Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <!-- TinyMCE WYSIWYG Editor -->
     <script src="https://cdn.jsdelivr.net/npm/tinymce@6.8.2/tinymce.min.js"></script>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -186,7 +225,6 @@ $tasks = $db->query("
                         </thead>
                         <tbody>
                             <?php foreach ($bugs as $bug): 
-                                // Get attachments count for this bug
                                 $attachments_count = $db->query("SELECT COUNT(*) FROM attachments WHERE entity_type = 'bug' AND entity_id = " . $bug['id'])->fetchColumn();
                             ?>
                             <tr>
@@ -361,7 +399,6 @@ $tasks = $db->query("
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Update bug status functionality
         document.addEventListener('DOMContentLoaded', function() {
             const updateButtons = document.querySelectorAll('.update-bug-status');
             const updateModal = new bootstrap.Modal(document.getElementById('updateBugStatusModal'));
@@ -380,9 +417,4 @@ $tasks = $db->query("
         });
     </script>
 </body>
-<footer class="bg-dark text-light text-center py-3 mt-5">
-    <div class="container">
-        <p class="mb-0">Developed by APNLAB. 2025.</p>
-    </div>
-</footer>
 </html>
