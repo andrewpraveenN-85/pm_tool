@@ -27,7 +27,7 @@ if ($_POST) {
             
             // Insert task
             $query = "INSERT INTO tasks (name, description, project_id, priority, start_datetime, end_datetime, created_by, status) 
-                      VALUES (:name, :description, :project_id, :priority, :start_datetime, :end_datetime, :created_by, 'pending')";
+                      VALUES (:name, :description, :project_id, :priority, :start_datetime, :end_datetime, :created_by, 'todo')";
             
             $stmt = $db->prepare($query);
             $stmt->bindParam(':name', $name);
