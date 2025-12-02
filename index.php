@@ -58,10 +58,10 @@ $bestPerformersWeek = getBestPerformers($db, 'week');
 $bestPerformersMonth = getBestPerformers($db, 'month');
 
 // If no performers available and user is not logged in, redirect to login
-if (empty($bestPerformersWeek) && empty($bestPerformersMonth) && !$isLoggedIn) {
-    header("Location: login.php");
-    exit;
-}
+// if (empty($bestPerformersWeek) && empty($bestPerformersMonth) && !$isLoggedIn) {
+//     header("Location: login.php");
+//     exit;
+// }
 ?>
 <!DOCTYPE html>
 <html lang="en">
