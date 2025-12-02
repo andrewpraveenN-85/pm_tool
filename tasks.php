@@ -544,6 +544,12 @@ if (isset($_GET['edit_task'])) {
         .attachment-item:hover {
             background: #e9ecef;
         }
+        .task-table tr {
+            cursor: pointer;
+        }
+        .task-table tr:hover {
+            background-color: #f5f5f5;
+        }
     </style>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -711,6 +717,19 @@ if (isset($_GET['edit_task'])) {
                 }
             });
         });
+        
+        // Auto-open edit modal if edit_task parameter exists
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('edit_task')) {
+            // Wait for modal to be fully loaded
+            setTimeout(function() {
+                const editModalElement = document.getElementById('editTaskModal');
+                if (editModalElement) {
+                    const editModal = new bootstrap.Modal(editModalElement);
+                    editModal.show();
+                }
+            }, 100);
+        }
     });
     </script>
 </head>
@@ -827,7 +846,7 @@ if (isset($_GET['edit_task'])) {
                 </div>
 
                 <div class="table-responsive">
-                    <table class="table table-striped table-hover">
+                    <table class="table table-striped table-hover task-table">
                         <thead class="table-dark">
                             <tr>
                                 <th>Task Name</th>
@@ -934,7 +953,7 @@ if (isset($_GET['edit_task'])) {
                                             <i class="fas fa-eye"></i> View
                                         </a>
                                         <?php if ($_SESSION['user_role'] == 'manager'): ?>
-                                        <a href="?edit_task=<?= $task['id'] ?>" class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#editTaskModal">
+                                        <a href="tasks.php?edit_task=<?= $task['id'] ?>" class="btn btn-sm btn-outline-info">
                                             <i class="fas fa-edit"></i> Edit
                                         </a>
                                         <?php endif; ?>
@@ -1058,7 +1077,7 @@ if (isset($_GET['edit_task'])) {
         </div>
     </div>
     
-    <!-- Edit Task Modal -->
+    <!-- Edit Task Modal - Always in DOM but only populated when needed -->
     <div class="modal fade" id="editTaskModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -1172,6 +1191,13 @@ if (isset($_GET['edit_task'])) {
                         <button type="submit" name="update_task" class="btn btn-primary">Update Task</button>
                     </div>
                 </form>
+                <?php else: ?>
+                <div class="modal-body text-center py-5">
+                    <div class="spinner-border text-primary mb-3" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p>Loading task data...</p>
+                </div>
                 <?php endif; ?>
             </div>
         </div>
@@ -1242,15 +1268,18 @@ if (isset($_GET['edit_task'])) {
                 });
             }
             
-            // Auto-open edit modal if edit_task parameter exists
-            const urlParams = new URLSearchParams(window.location.search);
-            if (urlParams.has('edit_task')) {
-                const editModal = new bootstrap.Modal(document.getElementById('editTaskModal'));
-                editModal.show();
-                
-                // Remove edit_task parameter from URL without reloading
-                const newUrl = window.location.pathname + window.location.search.replace(/&?edit_task=[^&]*/g, '');
-                window.history.replaceState({}, document.title, newUrl);
+            // Edit modal handling
+            const editModalElement = document.getElementById('editTaskModal');
+            if (editModalElement) {
+                editModalElement.addEventListener('hidden.bs.modal', function() {
+                    // Clear the edit_task parameter from URL when modal is closed
+                    const urlParams = new URLSearchParams(window.location.search);
+                    if (urlParams.has('edit_task')) {
+                        urlParams.delete('edit_task');
+                        const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+                        window.history.replaceState({}, document.title, newUrl);
+                    }
+                });
             }
         });
     </script>
