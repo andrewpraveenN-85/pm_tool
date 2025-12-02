@@ -118,8 +118,8 @@ if ($_POST) {
                             $target_file = $upload_dir . $filename;
                             
                             if (move_uploaded_file($tmp_name, $target_file)) {
-                                $query = "INSERT INTO attachments (entity_type, entity_id, filename, original_name, file_path, file_size, file_type, uploaded_by) 
-                                          VALUES ('task', :entity_id, :filename, :original_name, :file_path, :file_size, :file_type, :uploaded_by)";
+                                $query = "INSERT INTO attachments (entity_type, entity_id, filename, original_name, file_path, file_size, file_type, uploaded_by, uploaded_on) 
+                                          VALUES ('task', :entity_id, :filename, :original_name, :file_path, :file_size, :file_type, :uploaded_by, NOW())";
                                 $stmt = $db->prepare($query);
                                 $stmt->bindParam(':entity_id', $task_id);
                                 $stmt->bindParam(':filename', $filename);
@@ -267,8 +267,8 @@ if ($_POST) {
                             $target_file = $upload_dir . $filename;
                             
                             if (move_uploaded_file($tmp_name, $target_file)) {
-                                $query = "INSERT INTO attachments (entity_type, entity_id, filename, original_name, file_path, file_size, file_type, uploaded_by) 
-                                          VALUES ('task', :entity_id, :filename, :original_name, :file_path, :file_size, :file_type, :uploaded_by)";
+                                $query = "INSERT INTO attachments (entity_type, entity_id, filename, original_name, file_path, file_size, file_type, uploaded_by, uploaded_on) 
+                                          VALUES ('task', :entity_id, :filename, :original_name, :file_path, :file_size, :file_type, :uploaded_by, NOW())";
                                 $stmt = $db->prepare($query);
                                 $stmt->bindParam(':entity_id', $task_id);
                                 $stmt->bindParam(':filename', $filename);
@@ -501,8 +501,8 @@ if (isset($_GET['edit_task'])) {
         $assignees_stmt->execute();
         $edit_task['assignees'] = $assignees_stmt->fetchAll(PDO::FETCH_COLUMN);
         
-        // Get attachments
-        $attachments_query = "SELECT * FROM attachments WHERE entity_type = 'task' AND entity_id = :task_id ORDER BY uploaded_at DESC";
+        // Get attachments - FIXED: Use uploaded_on instead of uploaded_at
+        $attachments_query = "SELECT * FROM attachments WHERE entity_type = 'task' AND entity_id = :task_id ORDER BY created_at DESC";
         $attachments_stmt = $db->prepare($attachments_query);
         $attachments_stmt->bindParam(':task_id', $task_id);
         $attachments_stmt->execute();
