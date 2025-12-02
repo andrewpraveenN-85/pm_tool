@@ -93,12 +93,6 @@ if ($_POST) {
             <div class="text-center mt-3">
                 <a href="forgot_password.php" class="text-decoration-none">Forgot Password?</a>
             </div>
-            
-            <div class="text-center mt-3">
-                <small class="text-muted">
-                    Default login: manager@taskmanager.com / password
-                </small>
-            </div>
         </div>
     </div>
     

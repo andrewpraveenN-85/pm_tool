@@ -50,7 +50,9 @@ $stats_query = "
         COUNT(t.id) as total_tasks,
         SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) as completed_tasks,
         COUNT(DISTINCT b.id) as total_bugs,
-        AVG(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) * 100 as completion_rate
+        AVG(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) * 100 as completion_rate,
+        DATEDIFF(NOW(), p.created_at) as days_since_creation,
+        p.duration_days
     FROM projects p
     LEFT JOIN tasks t ON p.id = t.project_id
     LEFT JOIN bugs b ON t.id = b.task_id
@@ -60,6 +62,26 @@ $stats_stmt = $db->prepare($stats_query);
 $stats_stmt->bindParam(':project_id', $project_id);
 $stats_stmt->execute();
 $stats = $stats_stmt->fetch(PDO::FETCH_ASSOC);
+
+// Calculate project progress and time statistics
+$project_duration = $stats['duration_days'] ?? 0;
+$days_since_creation = $stats['days_since_creation'] ?? 0;
+$progress_percentage = $project_duration > 0 ? min(100, ($days_since_creation / $project_duration) * 100) : 0;
+$remaining_days = max(0, $project_duration - $days_since_creation);
+
+// Format duration for display
+$duration_text = '';
+if ($project['duration_days']) {
+    if ($project['duration_days'] % 30 === 0) {
+        $months = $project['duration_days'] / 30;
+        $duration_text = $months . ($months == 1 ? ' month' : ' months');
+    } elseif ($project['duration_days'] % 7 === 0) {
+        $weeks = $project['duration_days'] / 7;
+        $duration_text = $weeks . ($weeks == 1 ? ' week' : ' weeks');
+    } else {
+        $duration_text = $project['duration_days'] . ($project['duration_days'] == 1 ? ' day' : ' days');
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -69,21 +91,8 @@ $stats = $stats_stmt->fetch(PDO::FETCH_ASSOC);
     <title><?= htmlspecialchars($project['name']) ?> - Task Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <!-- TinyMCE WYSIWYG Editor -->
-    <script src="https://cdn.jsdelivr.net/npm/tinymce@6.8.2/tinymce.min.js"></script>
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        tinymce.init({
-            selector: 'textarea.wysiwyg',
-            plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
-            toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
-            menubar: false,
-            height: 300,
-            promotion: false,
-            branding: false
-        });
-    });
-    </script>
+    <!-- Chart.js for progress visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <?php include 'includes/header.php'; ?>
@@ -109,6 +118,7 @@ $stats = $stats_stmt->fetch(PDO::FETCH_ASSOC);
                                         <small class="text-muted">
                                             <strong>Created by:</strong> <?= htmlspecialchars($project['created_by_name']) ?><br>
                                             <strong>Created:</strong> <?= date('F j, Y', strtotime($project['created_at'])) ?><br>
+                                            <strong>Duration:</strong> <?= $duration_text ?><br>
                                             <strong>Last Updated:</strong> <?= date('F j, Y', strtotime($project['updated_at'])) ?>
                                         </small>
                                     </div>
@@ -119,15 +129,43 @@ $stats = $stats_stmt->fetch(PDO::FETCH_ASSOC);
                                             <a href="<?= $project['git_url'] ?>" target="_blank"><?= $project['git_url'] ?></a>
                                         </small>
                                         <?php endif; ?>
+                                        
+                                        <!-- Time Progress -->
+                                        <div class="mt-2">
+                                            <small class="text-muted">
+                                                <strong>Project Progress:</strong><br>
+                                                <div class="progress mt-1" style="height: 8px;">
+                                                    <div class="progress-bar bg-<?= 
+                                                        $progress_percentage < 50 ? 'success' : 
+                                                        ($progress_percentage < 80 ? 'warning' : 'danger')
+                                                    ?>" role="progressbar" 
+                                                    style="width: <?= $progress_percentage ?>%;" 
+                                                    aria-valuenow="<?= $progress_percentage ?>" 
+                                                    aria-valuemin="0" aria-valuemax="100"></div>
+                                                </div>
+                                                <small>
+                                                    <?= number_format($progress_percentage, 1) ?>% complete • 
+                                                    <?= $remaining_days ?> <?= $remaining_days == 1 ? 'day' : 'days' ?> remaining
+                                                </small>
+                                            </small>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                             <div class="col-md-4 text-end">
-                                <span class="badge bg-<?= $project['status'] == 'active' ? 'success' : ($project['status'] == 'completed' ? 'info' : 'secondary') ?> fs-6">
+                                <span class="badge bg-<?= 
+                                    $project['status'] == 'active' ? 'success' : 
+                                    ($project['status'] == 'completed' ? 'info' : 'secondary') 
+                                ?> fs-6">
                                     <?= ucfirst($project['status']) ?>
                                 </span>
                                 
                                 <div class="mt-3">
+                                    <?php if ($_SESSION['user_role'] == 'manager'): ?>
+                                    <a href="projects.php" class="btn btn-outline-primary">
+                                        <i class="fas fa-edit"></i> Edit Project
+                                    </a>
+                                    <?php endif; ?>
                                     <a href="tasks.php" class="btn btn-outline-primary">
                                         <i class="fas fa-tasks"></i> View All Tasks
                                     </a>
@@ -140,34 +178,102 @@ $stats = $stats_stmt->fetch(PDO::FETCH_ASSOC);
                 <!-- Project Statistics -->
                 <div class="row mb-4">
                     <div class="col-md-3">
-                        <div class="card text-center">
+                        <div class="card text-center h-100">
                             <div class="card-body">
                                 <h3 class="text-primary"><?= $stats['total_tasks'] ?></h3>
                                 <p class="text-muted">Total Tasks</p>
+                                <?php if ($stats['total_tasks'] > 0): ?>
+                                <small class="text-success">
+                                    <?= $stats['completed_tasks'] ?> completed
+                                </small>
+                                <?php endif; ?>
                             </div>
                         </div>
                     </div>
                     <div class="col-md-3">
-                        <div class="card text-center">
+                        <div class="card text-center h-100">
                             <div class="card-body">
                                 <h3 class="text-success"><?= $stats['completed_tasks'] ?></h3>
                                 <p class="text-muted">Completed Tasks</p>
+                                <?php if ($stats['total_tasks'] > 0): ?>
+                                <small class="text-info">
+                                    <?= number_format(($stats['completed_tasks'] / $stats['total_tasks']) * 100, 1) ?>% completion
+                                </small>
+                                <?php endif; ?>
                             </div>
                         </div>
                     </div>
                     <div class="col-md-3">
-                        <div class="card text-center">
+                        <div class="card text-center h-100">
                             <div class="card-body">
                                 <h3 class="text-danger"><?= $stats['total_bugs'] ?></h3>
                                 <p class="text-muted">Total Bugs</p>
+                                <?php if ($stats['total_tasks'] > 0): ?>
+                                <small class="text-muted">
+                                    <?= number_format(($stats['total_bugs'] / max(1, $stats['total_tasks'])), 1) ?> bugs per task
+                                </small>
+                                <?php endif; ?>
                             </div>
                         </div>
                     </div>
                     <div class="col-md-3">
-                        <div class="card text-center">
+                        <div class="card text-center h-100">
                             <div class="card-body">
                                 <h3 class="text-info"><?= number_format($stats['completion_rate'], 1) ?>%</h3>
                                 <p class="text-muted">Completion Rate</p>
+                                <small class="text-muted">
+                                    <i class="fas fa-calendar-alt"></i> <?= $days_since_creation ?> days running
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Time Progress Chart -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0">Project Timeline</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <canvas id="timeProgressChart" height="100"></canvas>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="row">
+                                    <div class="col-6">
+                                        <div class="card bg-light">
+                                            <div class="card-body text-center">
+                                                <h4 class="text-success"><?= $project['duration_days'] ?></h4>
+                                                <p class="text-muted mb-0">Planned Duration (days)</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-6">
+                                        <div class="card bg-light">
+                                            <div class="card-body text-center">
+                                                <h4 class="text-info"><?= $days_since_creation ?></h4>
+                                                <p class="text-muted mb-0">Days Since Creation</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-6 mt-3">
+                                        <div class="card bg-light">
+                                            <div class="card-body text-center">
+                                                <h4 class="text-warning"><?= $remaining_days ?></h4>
+                                                <p class="text-muted mb-0">Days Remaining</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-6 mt-3">
+                                        <div class="card bg-light">
+                                            <div class="card-body text-center">
+                                                <h4 class="text-primary"><?= number_format($progress_percentage, 1) ?>%</h4>
+                                                <p class="text-muted mb-0">Time Progress</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -175,67 +281,127 @@ $stats = $stats_stmt->fetch(PDO::FETCH_ASSOC);
 
                 <!-- Tasks Table -->
                 <div class="card">
-                    <div class="card-header">
+                    <div class="card-header d-flex justify-content-between align-items-center">
                         <h5 class="mb-0">Project Tasks</h5>
+                        <div>
+                            <a href="tasks.php?project_filter=<?= $project_id ?>" class="btn btn-sm btn-primary">
+                                <i class="fas fa-filter"></i> Filter by Project
+                            </a>
+                            <?php if ($_SESSION['user_role'] == 'manager'): ?>
+                            <a href="tasks.php?create_task=1&project_id=<?= $project_id ?>" class="btn btn-sm btn-success">
+                                <i class="fas fa-plus"></i> Add Task
+                            </a>
+                            <?php endif; ?>
+                        </div>
                     </div>
                     <div class="card-body">
-                        <div class="table-responsive">
-                            <table class="table table-striped">
-                                <thead>
-                                    <tr>
-                                        <th>Task Name</th>
-                                        <th>Priority</th>
-                                        <th>Status</th>
-                                        <th>Assignees</th>
-                                        <th>Start Date</th>
-                                        <th>End Date</th>
-                                        <th>Bugs</th>
-                                        <th>Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($tasks as $task): ?>
-                                    <tr>
-                                        <td>
-                                            <strong><?= htmlspecialchars($task['name']) ?></strong>
-                                            <?php if ($task['description']): ?>
-                                                <br><small class="text-muted"><?= substr(strip_tags($task['description']), 0, 50) ?>...</small>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-<?= 
-                                                $task['priority'] == 'critical' ? 'danger' : 
-                                                ($task['priority'] == 'high' ? 'warning' : 
-                                                ($task['priority'] == 'medium' ? 'info' : 'success')) 
-                                            ?>">
-                                                <?= ucfirst($task['priority']) ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-secondary">
-                                                <?= ucfirst(str_replace('_', ' ', $task['status'])) ?>
-                                            </span>
-                                        </td>
-                                        <td><?= htmlspecialchars($task['assignee_names']) ?></td>
-                                        <td><?= $task['start_datetime'] ? date('M j, Y', strtotime($task['start_datetime'])) : '-' ?></td>
-                                        <td><?= $task['end_datetime'] ? date('M j, Y', strtotime($task['end_datetime'])) : '-' ?></td>
-                                        <td>
-                                            <?php if ($task['bug_count'] > 0): ?>
-                                                <span class="badge bg-danger"><?= $task['bug_count'] ?></span>
-                                            <?php else: ?>
-                                                <span class="text-muted">-</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <a href="task_details.php?id=<?= $task['id'] ?>" class="btn btn-sm btn-outline-primary">
-                                                <i class="fas fa-eye"></i> View
-                                            </a>
-                                        </td>
-                                    </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
+                        <?php if (empty($tasks)): ?>
+                            <div class="alert alert-info">
+                                <i class="fas fa-info-circle"></i> No tasks found for this project. 
+                                <?php if ($_SESSION['user_role'] == 'manager'): ?>
+                                <a href="tasks.php?create_task=1&project_id=<?= $project_id ?>" class="alert-link">Create the first task</a>
+                                <?php endif; ?>
+                            </div>
+                        <?php else: ?>
+                            <div class="table-responsive">
+                                <table class="table table-striped table-hover">
+                                    <thead class="table-dark">
+                                        <tr>
+                                            <th>Task Name</th>
+                                            <th>Priority</th>
+                                            <th>Status</th>
+                                            <th>Assignees</th>
+                                            <th>Start Date</th>
+                                            <th>End Date</th>
+                                            <th>Bugs</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($tasks as $task): ?>
+                                        <tr>
+                                            <td>
+                                                <strong><?= htmlspecialchars($task['name']) ?></strong>
+                                                <?php if ($task['description']): ?>
+                                                    <br><small class="text-muted"><?= substr(strip_tags($task['description']), 0, 50) ?>...</small>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-<?= 
+                                                    $task['priority'] == 'critical' ? 'danger' : 
+                                                    ($task['priority'] == 'high' ? 'warning' : 
+                                                    ($task['priority'] == 'medium' ? 'info' : 'success')) 
+                                                ?>">
+                                                    <?= ucfirst($task['priority']) ?>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-<?= 
+                                                    $task['status'] == 'open' ? 'secondary' : 
+                                                    ($task['status'] == 'in_progress' ? 'warning' : 
+                                                    ($task['status'] == 'completed' ? 'success' : 
+                                                    ($task['status'] == 'closed' ? 'info' : 'light'))) 
+                                                ?>">
+                                                    <?= ucfirst(str_replace('_', ' ', $task['status'])) ?>
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <?php if ($task['assignee_names']): ?>
+                                                    <?= htmlspecialchars($task['assignee_names']) ?>
+                                                <?php else: ?>
+                                                    <span class="text-muted">Unassigned</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <?php if ($task['start_datetime']): ?>
+                                                    <?= date('M j, Y', strtotime($task['start_datetime'])) ?>
+                                                    <br><small class="text-muted"><?= date('g:i A', strtotime($task['start_datetime'])) ?></small>
+                                                <?php else: ?>
+                                                    <span class="text-muted">-</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <?php if ($task['end_datetime']): ?>
+                                                    <?php if (strtotime($task['end_datetime']) < time() && $task['status'] != 'completed' && $task['status'] != 'closed'): ?>
+                                                        <span class="text-danger">
+                                                            <?= date('M j, Y', strtotime($task['end_datetime'])) ?>
+                                                            <br><small>Overdue</small>
+                                                        </span>
+                                                    <?php else: ?>
+                                                        <?= date('M j, Y', strtotime($task['end_datetime'])) ?>
+                                                        <br><small class="text-muted"><?= date('g:i A', strtotime($task['end_datetime'])) ?></small>
+                                                    <?php endif; ?>
+                                                <?php else: ?>
+                                                    <span class="text-muted">-</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <?php if ($task['bug_count'] > 0): ?>
+                                                    <a href="bugs.php?task_filter=<?= $task['id'] ?>" class="badge bg-danger text-decoration-none">
+                                                        <i class="fas fa-bug"></i> <?= $task['bug_count'] ?>
+                                                    </a>
+                                                <?php else: ?>
+                                                    <span class="text-muted">-</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <div class="btn-group">
+                                                    <a href="task_details.php?id=<?= $task['id'] ?>" class="btn btn-sm btn-outline-primary">
+                                                        <i class="fas fa-eye"></i> View
+                                                    </a>
+                                                    <?php if ($_SESSION['user_role'] == 'manager'): ?>
+                                                    <a href="tasks.php?edit_task=<?= $task['id'] ?>" class="btn btn-sm btn-outline-warning">
+                                                        <i class="fas fa-edit"></i> Edit
+                                                    </a>
+                                                    <?php endif; ?>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>
@@ -243,6 +409,74 @@ $stats = $stats_stmt->fetch(PDO::FETCH_ASSOC);
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Time Progress Chart
+            const timeCtx = document.getElementById('timeProgressChart').getContext('2d');
+            const timeProgressChart = new Chart(timeCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Days Passed', 'Days Remaining'],
+                    datasets: [{
+                        data: [<?= $days_since_creation ?>, <?= $remaining_days ?>],
+                        backgroundColor: [
+                            'rgba(54, 162, 235, 0.8)',
+                            'rgba(255, 206, 86, 0.8)'
+                        ],
+                        borderColor: [
+                            'rgba(54, 162, 235, 1)',
+                            'rgba(255, 206, 86, 1)'
+                        ],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    label += context.parsed + ' days';
+                                    return label;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            
+            // Status Badge Colors
+            const statusBadges = document.querySelectorAll('.status-badge');
+            statusBadges.forEach(badge => {
+                const status = badge.textContent.trim().toLowerCase();
+                let bgClass = 'bg-secondary';
+                
+                switch(status) {
+                    case 'open':
+                        bgClass = 'bg-secondary';
+                        break;
+                    case 'in progress':
+                        bgClass = 'bg-warning';
+                        break;
+                    case 'completed':
+                        bgClass = 'bg-success';
+                        break;
+                    case 'closed':
+                        bgClass = 'bg-info';
+                        break;
+                }
+                
+                badge.classList.add(bgClass);
+            });
+        });
+    </script>
 </body>
 <footer class="bg-dark text-light text-center py-3 mt-5">
     <div class="container">

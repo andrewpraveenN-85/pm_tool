@@ -23,21 +23,6 @@ $notification = new Notification($db);
                 <li class="nav-item">
                     <a class="nav-link" href="projects.php">Projects</a>
                 </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="users.php">Users</a>
-                </li>
-                <!-- Reports Dropdown for Managers -->
-                <li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle" href="#" id="reportsDropdown" role="button" data-bs-toggle="dropdown">
-                        Reports
-                    </a>
-                    <ul class="dropdown-menu">
-                        <li><a class="dropdown-item" href="reports.php">Basic Reports</a></li>
-                        <li><a class="dropdown-item" href="advanced_reports.php">Advanced Analytics</a></li>
-                        <li><a class="dropdown-item" href="employee_performance.php">Employee Performance</a></li>
-                        <li><a class="dropdown-item" href="activity_logs_report.php">Activity Logs</a></li>
-                    </ul>
-                </li>
                 <?php endif; ?>
                 <li class="nav-item">
                     <a class="nav-link" href="tasks.php">Tasks</a>
@@ -49,6 +34,24 @@ $notification = new Notification($db);
                 <li class="nav-item">
                     <a class="nav-link" href="my_performance.php">My Performance</a>
                 </li>
+                <?php if ($_SESSION['user_role'] == 'manager'): ?>
+                <li class="nav-item">
+                    <a class="nav-link" href="users.php">Users</a>
+                </li>
+                <!-- Reports Dropdown for Managers -->
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="#" id="reportsDropdown" role="button" data-bs-toggle="dropdown">
+                        Reports
+                    </a>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="reports.php">Basic Reports</a></li>
+                        <li><a class="dropdown-item" href="advanced_reports.php">Advanced Analytics</a></li>
+                        <li><a class="dropdown-item" href="employee_tasks.php">Employee Tasks</a></li>
+                        <li><a class="dropdown-item" href="employee_performance.php">Employee Performance</a></li>
+                        <li><a class="dropdown-item" href="activity_logs_report.php">Activity Logs</a></li>
+                    </ul>
+                </li>
+                <?php endif; ?>
             </ul>
             <ul class="navbar-nav">
                 <!-- Notifications -->

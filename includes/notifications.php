@@ -39,13 +39,13 @@ class Notification {
         ";
         
         $stmt = $this->conn->prepare($query);
-        $stmt->execute([$warning_hours]);
+        $stmt->execute(array($warning_hours));
         $tasks = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
         foreach ($tasks as $task) {
-            $assignee_ids = !empty($task['assignee_ids']) ? explode(',', $task['assignee_ids']) : [];
-            $assignee_emails = !empty($task['assignee_emails']) ? explode(',', $task['assignee_emails']) : [];
-            $assignee_names = !empty($task['assignee_names']) ? explode(',', $task['assignee_names']) : [];
+            $assignee_ids = !empty($task['assignee_ids']) ? explode(',', $task['assignee_ids']) : array();
+            $assignee_emails = !empty($task['assignee_emails']) ? explode(',', $task['assignee_emails']) : array();
+            $assignee_names = !empty($task['assignee_names']) ? explode(',', $task['assignee_names']) : array();
             
             // Notify developers
             foreach ($assignee_ids as $index => $user_id) {
@@ -58,9 +58,10 @@ class Notification {
                     );
 
                     if ($this->emailService && isset($assignee_emails[$index])) {
+                        $assignee_name = isset($assignee_names[$index]) ? $assignee_names[$index] : 'Developer';
                         $this->sendDeadlineEmail(
                             $assignee_emails[$index],
-                            $assignee_names[$index] ?? 'Developer',
+                            $assignee_name,
                             $task['name'],
                             $task['end_datetime'],
                             $warning_hours,
@@ -105,7 +106,7 @@ class Notification {
         if (!$task) return;
 
         // Get user details
-        $user_details = [];
+        $user_details = array();
         if (!empty($user_ids)) {
             $placeholders = str_repeat('?,', count($user_ids) - 1) . '?';
             $user_query = "SELECT id, email, name FROM users WHERE id IN ($placeholders)";
@@ -123,13 +124,64 @@ class Notification {
             );
 
             if ($this->emailService) {
-                $user_detail = array_filter($user_details, function($u) use ($user_id) {
-                    return $u['id'] == $user_id;
-                });
-                $user_detail = reset($user_detail);
+                $user_detail = null;
+                foreach ($user_details as $ud) {
+                    if ($ud['id'] == $user_id) {
+                        $user_detail = $ud;
+                        break;
+                    }
+                }
 
                 if ($user_detail) {
                     $this->sendAssignmentEmail(
+                        $user_detail['email'],
+                        $user_detail['name'],
+                        $task['name'],
+                        $task['created_by']
+                    );
+                }
+            }
+        }
+    }
+
+    public function createTaskUpdateNotification($task_id, $user_ids) {
+        $task_query = "SELECT name, created_by FROM tasks WHERE id = :task_id";
+        $task_stmt = $this->conn->prepare($task_query);
+        $task_stmt->bindParam(':task_id', $task_id);
+        $task_stmt->execute();
+        $task = $task_stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$task) return;
+
+        // Get user details
+        $user_details = array();
+        if (!empty($user_ids)) {
+            $placeholders = str_repeat('?,', count($user_ids) - 1) . '?';
+            $user_query = "SELECT id, email, name FROM users WHERE id IN ($placeholders)";
+            $user_stmt = $this->conn->prepare($user_query);
+            $user_stmt->execute($user_ids);
+            $user_details = $user_stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        foreach ($user_ids as $user_id) {
+            $this->createNotification(
+                $user_id,
+                'Task Updated',
+                "Task '{$task['name']}' has been updated",
+                'task_update'
+            );
+
+            if ($this->emailService) {
+                $user_detail = null;
+                foreach ($user_details as $ud) {
+                    if ($ud['id'] == $user_id) {
+                        $user_detail = $ud;
+                        break;
+                    }
+                }
+
+                if ($user_detail) {
+                    $this->sendTaskUpdateEmail(
                         $user_detail['email'],
                         $user_detail['name'],
                         $task['name'],
@@ -150,8 +202,8 @@ class Notification {
         if (!$task) return;
 
         // Get user details
-        $user_ids = array_merge($assignee_ids, [$manager_id]);
-        $user_details = [];
+        $user_ids = array_merge($assignee_ids, array($manager_id));
+        $user_details = array();
         if (!empty($user_ids)) {
             $placeholders = str_repeat('?,', count($user_ids) - 1) . '?';
             $user_query = "SELECT id, email, name FROM users WHERE id IN ($placeholders)";
@@ -172,10 +224,13 @@ class Notification {
             );
 
             if ($this->emailService) {
-                $user_detail = array_filter($user_details, function($u) use ($user_id) {
-                    return $u['id'] == $user_id;
-                });
-                $user_detail = reset($user_detail);
+                $user_detail = null;
+                foreach ($user_details as $ud) {
+                    if ($ud['id'] == $user_id) {
+                        $user_detail = $ud;
+                        break;
+                    }
+                }
 
                 if ($user_detail) {
                     $this->sendTaskStatusUpdateEmail(
@@ -198,10 +253,13 @@ class Notification {
         );
 
         if ($this->emailService) {
-            $manager_detail = array_filter($user_details, function($u) use ($manager_id) {
-                return $u['id'] == $manager_id;
-            });
-            $manager_detail = reset($manager_detail);
+            $manager_detail = null;
+            foreach ($user_details as $ud) {
+                if ($ud['id'] == $manager_id) {
+                    $manager_detail = $ud;
+                    break;
+                }
+            }
 
             if ($manager_detail) {
                 $this->sendTaskStatusUpdateEmail(
@@ -250,6 +308,75 @@ class Notification {
         }
     }
 
+    public function createBugUpdateNotification($bug_id) {
+        $bug_query = "
+            SELECT b.name, b.priority, b.task_id, t.name as task_name, 
+                   t.created_by as manager_id, u.email as manager_email, u.name as manager_name
+            FROM bugs b 
+            LEFT JOIN tasks t ON b.task_id = t.id 
+            LEFT JOIN users u ON t.created_by = u.id 
+            WHERE b.id = :bug_id
+        ";
+        $bug_stmt = $this->conn->prepare($bug_query);
+        $bug_stmt->bindParam(':bug_id', $bug_id);
+        $bug_stmt->execute();
+        $bug = $bug_stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$bug) return;
+
+        // Get assignees from the associated task
+        $assignees_query = "
+            SELECT ta.user_id, u.email, u.name 
+            FROM task_assignments ta
+            LEFT JOIN users u ON ta.user_id = u.id
+            WHERE ta.task_id = :task_id
+        ";
+        $assignees_stmt = $this->conn->prepare($assignees_query);
+        $assignees_stmt->bindParam(':task_id', $bug['task_id']);
+        $assignees_stmt->execute();
+        $assignees = $assignees_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Notify manager
+        if ($bug['manager_id']) {
+            $this->createNotification(
+                $bug['manager_id'],
+                'Bug Updated',
+                "Bug '{$bug['name']}' has been updated for task: '{$bug['task_name']}'",
+                'bug_update'
+            );
+
+            if ($this->emailService && !empty($bug['manager_email'])) {
+                $this->sendBugUpdateEmail(
+                    $bug['manager_email'],
+                    $bug['manager_name'],
+                    $bug['name'],
+                    $bug['task_name'],
+                    'manager'
+                );
+            }
+        }
+
+        // Notify assignees
+        foreach ($assignees as $assignee) {
+            $this->createNotification(
+                $assignee['user_id'],
+                'Bug Updated',
+                "Bug '{$bug['name']}' has been updated for task: '{$bug['task_name']}'",
+                'bug_update'
+            );
+
+            if ($this->emailService && !empty($assignee['email'])) {
+                $this->sendBugUpdateEmail(
+                    $assignee['email'],
+                    $assignee['name'],
+                    $bug['name'],
+                    $bug['task_name'],
+                    'developer'
+                );
+            }
+        }
+    }
+
     public function createBugStatusUpdateNotification($bug_id, $new_status, $assignee_ids, $manager_id) {
         $bug_query = "
             SELECT b.name, b.priority, t.name as task_name, 
@@ -267,8 +394,8 @@ class Notification {
         if (!$bug) return;
 
         // Get user details
-        $user_ids = array_merge($assignee_ids, [$manager_id]);
-        $user_details = [];
+        $user_ids = array_merge($assignee_ids, array($manager_id));
+        $user_details = array();
         if (!empty($user_ids)) {
             $placeholders = str_repeat('?,', count($user_ids) - 1) . '?';
             $user_query = "SELECT id, email, name FROM users WHERE id IN ($placeholders)";
@@ -289,10 +416,13 @@ class Notification {
             );
 
             if ($this->emailService) {
-                $user_detail = array_filter($user_details, function($u) use ($user_id) {
-                    return $u['id'] == $user_id;
-                });
-                $user_detail = reset($user_detail);
+                $user_detail = null;
+                foreach ($user_details as $ud) {
+                    if ($ud['id'] == $user_id) {
+                        $user_detail = $ud;
+                        break;
+                    }
+                }
 
                 if ($user_detail) {
                     $this->sendBugStatusUpdateEmail(
@@ -444,21 +574,62 @@ class Notification {
         return $this->emailService->sendEmail($email, $subject, $message);
     }
 
+    private function sendTaskUpdateEmail($email, $name, $taskName, $updatedBy) {
+        if (!$this->emailService || !$this->emailService->isConfigured()) {
+            return false;
+        }
+
+        $subject = "📝 Task Updated: {$taskName}";
+        
+        $message = "
+            <html>
+            <head>
+                <style>
+                    body { font-family: Arial, sans-serif; }
+                    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                    .header { background: #17a2b8; color: white; padding: 15px; border-radius: 5px; }
+                    .content { margin: 20px 0; }
+                </style>
+            </head>
+            <body>
+                <div class='container'>
+                    <div class='header'>
+                        <h2>📝 Task Updated</h2>
+                    </div>
+                    <div class='content'>
+                        <p>Hello {$name},</p>
+                        <p>The task <strong>'{$taskName}'</strong> has been updated.</p>
+                        <p><strong>Updated by:</strong> Manager</p>
+                        <p><strong>Updated at:</strong> " . date('M j, Y g:i A') . "</p>
+                        <p>Please review the updated task details as changes may affect your work.</p>
+                        <p><a href='{$this->getAppUrl()}tasks.php' style='background: #17a2b8; color: white; padding: 10px 15px; text-decoration: none; border-radius: 3px; display: inline-block;'>View Updated Task</a></p>
+                    </div>
+                </div>
+            </body>
+            </html>
+        ";
+
+        return $this->emailService->sendEmail($email, $subject, $message);
+    }
+
     private function sendTaskStatusUpdateEmail($email, $name, $taskName, $newStatus, $recipientType) {
         if (!$this->emailService || !$this->emailService->isConfigured()) {
             return false;
         }
 
-        $status_colors = [
-            'pending' => '#ffc107',
+        $status_colors = array(
+            'todo' => '#ffc107',
+            'reopened' => '#fd7e14',
             'in_progress' => '#007bff',
-            'completed' => '#28a745',
-            'cancelled' => '#6c757d'
-        ];
+            'await_release' => '#17a2b8',
+            'in_review' => '#6f42c1',
+            'closed' => '#28a745'
+        );
 
         $subject = "🔄 Task Status Updated: {$taskName}";
         
         $status_display = ucfirst(str_replace('_', ' ', $newStatus));
+        $status_color = isset($status_colors[$newStatus]) ? $status_colors[$newStatus] : '#6c757d';
         
         $message = "
             <html>
@@ -479,7 +650,7 @@ class Notification {
                     <div class='content'>
                         <p>Hello {$name},</p>
                         <p>The status of task <strong>'{$taskName}'</strong> has been updated.</p>
-                        <p><strong>New Status:</strong> <span class='status' style='background: {$status_colors[$newStatus]}'>{$status_display}</span></p>
+                        <p><strong>New Status:</strong> <span class='status' style='background: {$status_color}'>{$status_display}</span></p>
                         <p><strong>Updated:</strong> " . date('M j, Y g:i A') . "</p>
                         <p><a href='{$this->getAppUrl()}tasks.php' style='background: #6f42c1; color: white; padding: 10px 15px; text-decoration: none; border-radius: 3px; display: inline-block;'>View Task Details</a></p>
                     </div>
@@ -496,14 +667,15 @@ class Notification {
             return false;
         }
 
-        $priority_color = [
+        $priority_color = array(
             'low' => '#28a745',
             'medium' => '#ffc107', 
             'high' => '#fd7e14',
             'critical' => '#dc3545'
-        ];
+        );
 
         $subject = "🚨 New {$priority} Priority Bug: {$bugName}";
+        $priority_bg_color = isset($priority_color[$priority]) ? $priority_color[$priority] : '#6c757d';
 
         $message = "
             <html>
@@ -528,7 +700,7 @@ class Notification {
                         <div style='background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0;'>
                             <p><strong>Bug:</strong> {$bugName}</p>
                             <p><strong>Task:</strong> {$taskName}</p>
-                            <p><strong>Priority:</strong> <span class='priority' style='background: {$priority_color[$priority]}'>{$priority}</span></p>
+                            <p><strong>Priority:</strong> <span class='priority' style='background: {$priority_bg_color}'>{$priority}</span></p>
                             <p><strong>Reported:</strong> " . date('M j, Y g:i A') . "</p>
                         </div>
                         
@@ -544,21 +716,60 @@ class Notification {
         return $this->emailService->sendEmail($email, $subject, $message);
     }
 
+    private function sendBugUpdateEmail($email, $name, $bugName, $taskName, $recipientType) {
+        if (!$this->emailService || !$this->emailService->isConfigured()) {
+            return false;
+        }
+
+        $subject = "📝 Bug Updated: {$bugName}";
+        
+        $message = "
+            <html>
+            <head>
+                <style>
+                    body { font-family: Arial, sans-serif; }
+                    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+                    .header { background: #17a2b8; color: white; padding: 15px; border-radius: 5px; }
+                    .content { margin: 20px 0; }
+                </style>
+            </head>
+            <body>
+                <div class='container'>
+                    <div class='header'>
+                        <h2>📝 Bug Updated</h2>
+                    </div>
+                    <div class='content'>
+                        <p>Hello {$name},</p>
+                        <p>The bug <strong>'{$bugName}'</strong> has been updated.</p>
+                        <p><strong>Associated Task:</strong> {$taskName}</p>
+                        <p><strong>Updated at:</strong> " . date('M j, Y g:i A') . "</p>
+                        <p>Please review the updated bug details as changes may affect your work.</p>
+                        <p><a href='{$this->getAppUrl()}bugs.php' style='background: #17a2b8; color: white; padding: 10px 15px; text-decoration: none; border-radius: 3px; display: inline-block;'>View Updated Bug</a></p>
+                    </div>
+                </div>
+            </body>
+            </html>
+        ";
+
+        return $this->emailService->sendEmail($email, $subject, $message);
+    }
+
     private function sendBugStatusUpdateEmail($email, $name, $bugName, $newStatus, $taskName, $recipientType) {
         if (!$this->emailService || !$this->emailService->isConfigured()) {
             return false;
         }
 
-        $status_colors = [
+        $status_colors = array(
             'open' => '#dc3545',
             'in_progress' => '#fd7e14',
             'resolved' => '#28a745',
             'closed' => '#6c757d'
-        ];
+        );
 
         $subject = "🔄 Bug Status Updated: {$bugName}";
         
         $status_display = ucfirst(str_replace('_', ' ', $newStatus));
+        $status_color = isset($status_colors[$newStatus]) ? $status_colors[$newStatus] : '#6c757d';
         
         $message = "
             <html>
@@ -583,7 +794,7 @@ class Notification {
                         <div style='background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 15px 0;'>
                             <p><strong>Bug:</strong> {$bugName}</p>
                             <p><strong>Task:</strong> {$taskName}</p>
-                            <p><strong>New Status:</strong> <span class='status' style='background: {$status_colors[$newStatus]}'>{$status_display}</span></p>
+                            <p><strong>New Status:</strong> <span class='status' style='background: {$status_color}'>{$status_display}</span></p>
                             <p><strong>Updated:</strong> " . date('M j, Y g:i A') . "</p>
                         </div>
                         
@@ -626,7 +837,7 @@ class Notification {
                             <p><strong>Task:</strong> {$taskName}</p>
                             <p><strong>Priority:</strong> {$priority}</p>
                             <p><strong>Due Date:</strong> " . date('M j, Y', strtotime($dueDate)) . "</p>
-                            <p><strong>Days Overdue:</strong> " . date_diff(new DateTime($dueDate), new DateTime())->days . "</p>
+                            <p><strong>Days Overdue:</strong> " . $this->calculateDaysOverdue($dueDate) . "</p>
                         </div>
                         <p>Please review and take appropriate action.</p>
                         <p><a href='{$this->getAppUrl()}bugs.php' style='background: #fd7e14; color: white; padding: 10px 15px; text-decoration: none; border-radius: 3px; display: inline-block;'>View Bug Details</a></p>
@@ -639,11 +850,18 @@ class Notification {
         return $this->emailService->sendEmail($email, $subject, $message);
     }
 
+    private function calculateDaysOverdue($dueDate) {
+        $dueDateTime = new DateTime($dueDate);
+        $currentDateTime = new DateTime();
+        $interval = $dueDateTime->diff($currentDateTime);
+        return $interval->days;
+    }
+
     // UTILITY METHODS
     private function getSetting($key, $default = null) {
         $query = "SELECT setting_value FROM settings WHERE setting_key = ?";
         $stmt = $this->conn->prepare($query);
-        $stmt->execute([$key]);
+        $stmt->execute(array($key));
         $result = $stmt->fetch(PDO::FETCH_ASSOC);
         
         return $result ? $result['setting_value'] : $default;

@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Nov 27, 2025 at 12:16 PM
+-- Generation Time: Dec 02, 2025 at 03:48 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -137,17 +137,11 @@ CREATE TABLE `projects` (
   `description` text DEFAULT NULL,
   `git_url` varchar(255) DEFAULT NULL,
   `status` enum('active','inactive','completed') DEFAULT 'active',
+  `duration_days` int(11) NOT NULL DEFAULT 30,
   `created_by` int(11) NOT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
---
--- Dumping data for table `projects`
---
-
-INSERT INTO `projects` (`id`, `name`, `icon`, `description`, `git_url`, `status`, `created_by`, `created_at`, `updated_at`) VALUES
-(1, 'test', '', 'trd', '', 'active', 1, '2025-11-27 06:28:47', '2025-11-27 06:28:47');
 
 -- --------------------------------------------------------
 
@@ -178,24 +172,6 @@ CREATE TABLE `settings` (
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
---
--- Dumping data for table `settings`
---
-
-INSERT INTO `settings` (`id`, `setting_key`, `setting_value`, `description`, `updated_at`) VALUES
-(1, 'company_name', 'Task Manager Pro', 'Company/Organization Name', '2025-11-27 03:28:12'),
-(2, 'notification_email', 'notifications@company.com', 'Email for system notifications', '2025-11-27 03:28:12'),
-(3, 'deadline_warning_hours', '8', 'Hours before deadline to send warning', '2025-11-27 03:28:12'),
-(4, 'auto_archive_days', '30', 'Days after completion to auto-archive tasks', '2025-11-27 03:28:12'),
-(5, 'max_file_size', '10', 'Maximum file upload size in MB', '2025-11-27 03:28:12'),
-(6, 'smtp_host', '', 'SMTP Server Host', '2025-11-27 03:50:27'),
-(7, 'smtp_port', '587', 'SMTP Server Port', '2025-11-27 03:50:27'),
-(8, 'smtp_username', '', 'SMTP Username', '2025-11-27 03:50:27'),
-(9, 'smtp_password', '', 'SMTP Password (encrypted)', '2025-11-27 03:50:27'),
-(10, 'smtp_encryption', 'tls', 'SMTP Encryption (tls/ssl/none)', '2025-11-27 03:50:27'),
-(11, 'smtp_from_email', '', 'From Email Address', '2025-11-27 03:50:27'),
-(12, 'smtp_from_name', 'Task Manager', 'From Name', '2025-11-27 03:50:27');
-
 -- --------------------------------------------------------
 
 --
@@ -216,13 +192,6 @@ CREATE TABLE `tasks` (
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
---
--- Dumping data for table `tasks`
---
-
-INSERT INTO `tasks` (`id`, `project_id`, `name`, `description`, `status`, `priority`, `attachments`, `start_datetime`, `end_datetime`, `created_by`, `created_at`, `updated_at`) VALUES
-(1, 1, 'tasj', 'task', 'todo', 'medium', NULL, '0000-00-00 00:00:00', '0000-00-00 00:00:00', 1, '2025-11-27 06:29:10', '2025-11-27 06:29:10');
 
 -- --------------------------------------------------------
 
@@ -260,7 +229,8 @@ CREATE TABLE `users` (
 --
 
 INSERT INTO `users` (`id`, `email`, `name`, `password`, `role`, `status`, `image`, `created_by`, `created_at`) VALUES
-(1, 'manager@taskmanager.com', 'System Manager', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'manager', 'active', NULL, NULL, '2025-11-27 03:28:12');
+(1, 'manager@taskmanager.com', 'System Manager', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'manager', 'active', NULL, NULL, '2025-11-27 03:28:12'),
+(2, 'test@taskmanager.com', 'tesdt', '$2y$10$nHr0vCkcev91LVILmESA4O6aAgr8231rZ5pZLYrOFkkG4OMr5zoLS', 'manager', 'active', NULL, 1, '2025-12-01 11:04:06');
 
 --
 -- Indexes for dumped tables
@@ -414,25 +384,25 @@ ALTER TABLE `password_resets`
 -- AUTO_INCREMENT for table `projects`
 --
 ALTER TABLE `projects`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `remember_me_tokens`
 --
 ALTER TABLE `remember_me_tokens`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `settings`
 --
 ALTER TABLE `settings`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=25;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `tasks`
 --
 ALTER TABLE `tasks`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `task_assignments`
@@ -444,7 +414,7 @@ ALTER TABLE `task_assignments`
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- Constraints for dumped tables

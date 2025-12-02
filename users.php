@@ -125,71 +125,248 @@ function sendUserCreationEmail($name, $email, $password, $role, $status) {
 // Handle form submissions
 if ($_POST) {
     if (isset($_POST['create_user'])) {
-        $name = $_POST['name'];
-        $email = $_POST['email'];
-        $plain_password = $_POST['password']; // Store plain password for email
-        $hashed_password = password_hash($plain_password, PASSWORD_DEFAULT);
-        $role = $_POST['role'];
-        $status = $_POST['status'];
+        // Form validation
+        $errors = [];
         
-        $query = "INSERT INTO users (name, email, password, role, status, created_by) 
-                  VALUES (:name, :email, :password, :role, :status, :created_by)";
+        // Required fields
+        $required_fields = ['name', 'email', 'password', 'role', 'status'];
+        foreach ($required_fields as $field) {
+            if (empty(trim($_POST[$field]))) {
+                $errors[] = ucfirst(str_replace('_', ' ', $field)) . " is required.";
+            }
+        }
         
-        $stmt = $db->prepare($query);
-        $stmt->bindParam(':name', $name);
-        $stmt->bindParam(':email', $email);
-        $stmt->bindParam(':password', $hashed_password);
-        $stmt->bindParam(':role', $role);
-        $stmt->bindParam(':status', $status);
-        $stmt->bindParam(':created_by', $_SESSION['user_id']);
+        // Name validation
+        $name = trim($_POST['name']);
+        if (!empty($name)) {
+            if (strlen($name) < 2 || strlen($name) > 100) {
+                $errors[] = "Name must be between 2 and 100 characters.";
+            }
+            if (!preg_match("/^[a-zA-Z\s\.\-']+$/", $name)) {
+                $errors[] = "Name can only contain letters, spaces, dots, hyphens, and apostrophes.";
+            }
+        }
         
-        if ($stmt->execute()) {
-            // Send email notification with access details
-            $emailSent = sendUserCreationEmail($name, $email, $plain_password, $role, $status);
+        // Email validation
+        $email = trim($_POST['email']);
+        if (!empty($email)) {
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                $errors[] = "Please enter a valid email address.";
+            }
+            if (strlen($email) > 255) {
+                $errors[] = "Email address is too long.";
+            }
             
-            if ($emailSent) {
-                $success = "User created successfully! Access details have been sent to the user's email.";
-            } else {
-                $success = "User created successfully! However, the email notification failed to send. Please notify the user manually with their credentials.";
+            // Check if email already exists
+            $email_check = $db->prepare("SELECT id FROM users WHERE email = ?");
+            $email_check->execute([$email]);
+            if ($email_check->rowCount() > 0) {
+                $errors[] = "This email address is already registered.";
+            }
+        }
+        
+        // Password validation
+        $password = $_POST['password'] ?? '';
+        if (!empty($password)) {
+            if (strlen($password) < 6) {
+                $errors[] = "Password must be at least 6 characters long.";
+            }
+            if (!preg_match('/[A-Z]/', $password)) {
+                $errors[] = "Password must contain at least one uppercase letter.";
+            }
+            if (!preg_match('/[a-z]/', $password)) {
+                $errors[] = "Password must contain at least one lowercase letter.";
+            }
+            if (!preg_match('/[0-9]/', $password)) {
+                $errors[] = "Password must contain at least one number.";
+            }
+            if (!preg_match('/[^A-Za-z0-9]/', $password)) {
+                $errors[] = "Password must contain at least one special character.";
+            }
+        }
+        
+        // Role validation
+        $allowed_roles = ['manager', 'developer', 'qa'];
+        $role = $_POST['role'] ?? '';
+        if (!in_array($role, $allowed_roles)) {
+            $errors[] = "Invalid role selected.";
+        }
+        
+        // Status validation
+        $allowed_statuses = ['active', 'inactive'];
+        $status = $_POST['status'] ?? '';
+        if (!in_array($status, $allowed_statuses)) {
+            $errors[] = "Invalid status selected.";
+        }
+        
+        if (empty($errors)) {
+            $name = $_POST['name'];
+            $email = $_POST['email'];
+            $plain_password = $_POST['password']; // Store plain password for email
+            $hashed_password = password_hash($plain_password, PASSWORD_DEFAULT);
+            $role = $_POST['role'];
+            $status = $_POST['status'];
+            
+            try {
+                $db->beginTransaction();
+                
+                $query = "INSERT INTO users (name, email, password, role, status, created_by) 
+                          VALUES (:name, :email, :password, :role, :status, :created_by)";
+                
+                $stmt = $db->prepare($query);
+                $stmt->bindParam(':name', $name);
+                $stmt->bindParam(':email', $email);
+                $stmt->bindParam(':password', $hashed_password);
+                $stmt->bindParam(':role', $role);
+                $stmt->bindParam(':status', $status);
+                $stmt->bindParam(':created_by', $_SESSION['user_id']);
+                
+                if ($stmt->execute()) {
+                    $db->commit();
+                    
+                    // Send email notification with access details
+                    $emailSent = sendUserCreationEmail($name, $email, $plain_password, $role, $status);
+                    
+                    if ($emailSent) {
+                        $success = "User created successfully! Access details have been sent to the user's email.";
+                    } else {
+                        $success = "User created successfully! However, the email notification failed to send. Please notify the user manually with their credentials.";
+                    }
+                    
+                    // Clear form data
+                    $_POST = array();
+                } else {
+                    throw new Exception("Failed to create user!");
+                }
+            } catch (Exception $e) {
+                $db->rollBack();
+                $error = "Failed to create user: " . $e->getMessage();
             }
         } else {
-            $error = "Failed to create user!";
+            $error = implode("<br>", $errors);
         }
     }
     
     if (isset($_POST['update_user'])) {
+        // Form validation for update
+        $errors = [];
+        
+        // Required fields
+        $required_fields = ['id', 'name', 'email', 'role', 'status'];
+        foreach ($required_fields as $field) {
+            if (empty(trim($_POST[$field]))) {
+                $errors[] = ucfirst(str_replace('_', ' ', $field)) . " is required.";
+            }
+        }
+        
+        // Name validation
+        $name = trim($_POST['name']);
+        if (!empty($name)) {
+            if (strlen($name) < 2 || strlen($name) > 100) {
+                $errors[] = "Name must be between 2 and 100 characters.";
+            }
+            if (!preg_match("/^[a-zA-Z\s\.\-']+$/", $name)) {
+                $errors[] = "Name can only contain letters, spaces, dots, hyphens, and apostrophes.";
+            }
+        }
+        
+        // Email validation
+        $email = trim($_POST['email']);
         $id = $_POST['id'];
-        $name = $_POST['name'];
-        $email = $_POST['email'];
-        $role = $_POST['role'];
-        $status = $_POST['status'];
-        
-        // Build update query
-        $query = "UPDATE users SET name = :name, email = :email, role = :role, status = :status";
-        
-        // Add password update if provided
-        if (!empty($_POST['password'])) {
-            $password = password_hash($_POST['password'], PASSWORD_DEFAULT);
-            $query .= ", password = :password";
+        if (!empty($email)) {
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                $errors[] = "Please enter a valid email address.";
+            }
+            if (strlen($email) > 255) {
+                $errors[] = "Email address is too long.";
+            }
+            
+            // Check if email already exists (excluding current user)
+            $email_check = $db->prepare("SELECT id FROM users WHERE email = ? AND id != ?");
+            $email_check->execute([$email, $id]);
+            if ($email_check->rowCount() > 0) {
+                $errors[] = "This email address is already registered to another user.";
+            }
         }
         
-        $query .= " WHERE id = :id";
-        
-        $stmt = $db->prepare($query);
-        $stmt->bindParam(':id', $id);
-        $stmt->bindParam(':name', $name);
-        $stmt->bindParam(':email', $email);
-        $stmt->bindParam(':role', $role);
-        $stmt->bindParam(':status', $status);
-        
-        if (!empty($_POST['password'])) {
-            $stmt->bindParam(':password', $password);
+        // Password validation if provided
+        $password = $_POST['password'] ?? '';
+        if (!empty($password)) {
+            if (strlen($password) < 6) {
+                $errors[] = "Password must be at least 6 characters long.";
+            }
+            if (!preg_match('/[A-Z]/', $password)) {
+                $errors[] = "Password must contain at least one uppercase letter.";
+            }
+            if (!preg_match('/[a-z]/', $password)) {
+                $errors[] = "Password must contain at least one lowercase letter.";
+            }
+            if (!preg_match('/[0-9]/', $password)) {
+                $errors[] = "Password must contain at least one number.";
+            }
+            if (!preg_match('/[^A-Za-z0-9]/', $password)) {
+                $errors[] = "Password must contain at least one special character.";
+            }
         }
         
-        if ($stmt->execute()) {
-            $success = "User updated successfully!";
+        // Role validation
+        $allowed_roles = ['manager', 'developer', 'qa'];
+        $role = $_POST['role'] ?? '';
+        if (!in_array($role, $allowed_roles)) {
+            $errors[] = "Invalid role selected.";
+        }
+        
+        // Status validation
+        $allowed_statuses = ['active', 'inactive'];
+        $status = $_POST['status'] ?? '';
+        if (!in_array($status, $allowed_statuses)) {
+            $errors[] = "Invalid status selected.";
+        }
+        
+        if (empty($errors)) {
+            $id = $_POST['id'];
+            $name = $_POST['name'];
+            $email = $_POST['email'];
+            $role = $_POST['role'];
+            $status = $_POST['status'];
+            
+            try {
+                $db->beginTransaction();
+                
+                // Build update query
+                $query = "UPDATE users SET name = :name, email = :email, role = :role, status = :status";
+                
+                // Add password update if provided
+                if (!empty($password)) {
+                    $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+                    $query .= ", password = :password";
+                }
+                
+                $query .= " WHERE id = :id";
+                
+                $stmt = $db->prepare($query);
+                $stmt->bindParam(':id', $id);
+                $stmt->bindParam(':name', $name);
+                $stmt->bindParam(':email', $email);
+                $stmt->bindParam(':role', $role);
+                $stmt->bindParam(':status', $status);
+                
+                if (!empty($password)) {
+                    $stmt->bindParam(':password', $hashed_password);
+                }
+                
+                if ($stmt->execute()) {
+                    $db->commit();
+                    $success = "User updated successfully!";
+                } else {
+                    throw new Exception("Failed to update user!");
+                }
+            } catch (Exception $e) {
+                $db->rollBack();
+                $error = "Failed to update user: " . $e->getMessage();
+            }
         } else {
-            $error = "Failed to update user!";
+            $error = implode("<br>", $errors);
         }
     }
 }
@@ -220,6 +397,27 @@ $user_stats = $db->query("
     <title>User Management - Task Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .password-strength {
+            height: 5px;
+            margin-top: 5px;
+            border-radius: 3px;
+        }
+        .strength-weak { background-color: #dc3545; width: 25%; }
+        .strength-fair { background-color: #ffc107; width: 50%; }
+        .strength-good { background-color: #28a745; width: 75%; }
+        .strength-strong { background-color: #007bff; width: 100%; }
+        .password-requirements {
+            display: none;
+        }
+        .form-text ul {
+            padding-left: 20px;
+            margin-bottom: 0;
+        }
+        .form-text li {
+            font-size: 0.875rem;
+        }
+    </style>
 </head>
 <body>
     <?php include 'includes/header.php'; ?>
@@ -349,7 +547,7 @@ $user_stats = $db->query("
                     <h5 class="modal-title">Create New User</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form method="POST">
+                <form method="POST" id="createUserForm" onsubmit="return validateCreateUserForm()">
                     <div class="modal-body">
                         <?php if (!$emailService->isConfigured()): ?>
                             <div class="alert alert-warning">
@@ -357,34 +555,61 @@ $user_stats = $db->query("
                                 SMTP is not configured. Email notifications will not be sent.
                             </div>
                         <?php endif; ?>
+                        
                         <div class="mb-3">
-                            <label class="form-label">Full Name</label>
-                            <input type="text" class="form-control" name="name" required>
+                            <label class="form-label">Full Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" name="name" id="create_name" required
+                                   value="<?= isset($_POST['name']) ? htmlspecialchars($_POST['name']) : '' ?>"
+                                   minlength="2" maxlength="100">
+                            <div class="invalid-feedback">Please enter a valid name (2-100 characters).</div>
                         </div>
+                        
                         <div class="mb-3">
-                            <label class="form-label">Email Address</label>
-                            <input type="email" class="form-control" name="email" required>
+                            <label class="form-label">Email Address <span class="text-danger">*</span></label>
+                            <input type="email" class="form-control" name="email" id="create_email" required
+                                   value="<?= isset($_POST['email']) ? htmlspecialchars($_POST['email']) : '' ?>"
+                                   maxlength="255">
+                            <div class="invalid-feedback">Please enter a valid email address.</div>
                         </div>
+                        
                         <div class="mb-3">
-                            <label class="form-label">Password</label>
-                            <input type="password" class="form-control" name="password" required minlength="6">
+                            <label class="form-label">Password <span class="text-danger">*</span></label>
+                            <input type="password" class="form-control" name="password" id="create_password" required
+                                   minlength="6" oninput="checkCreatePasswordStrength()">
+                            <div class="password-strength" id="createPasswordStrength"></div>
+                            <div class="password-requirements" id="createPasswordRequirements">
+                                <small class="text-muted">Password must contain:</small>
+                                <ul>
+                                    <li id="create-req-length">At least 6 characters</li>
+                                    <li id="create-req-uppercase">One uppercase letter</li>
+                                    <li id="create-req-lowercase">One lowercase letter</li>
+                                    <li id="create-req-number">One number</li>
+                                    <li id="create-req-special">One special character</li>
+                                </ul>
+                            </div>
+                            <div class="invalid-feedback" id="createPasswordError"></div>
                             <small class="text-muted">This password will be sent to the user via email.</small>
                         </div>
+                        
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Role</label>
-                                <select class="form-select" name="role" required>
-                                    <option value="manager">Manager</option>
-                                    <option value="developer">Developer</option>
-                                    <option value="qa">QA</option>
+                                <label class="form-label">Role <span class="text-danger">*</span></label>
+                                <select class="form-select" name="role" id="create_role" required>
+                                    <option value="">Select Role</option>
+                                    <option value="manager" <?= (isset($_POST['role']) && $_POST['role'] == 'manager') ? 'selected' : '' ?>>Manager</option>
+                                    <option value="developer" <?= (isset($_POST['role']) && $_POST['role'] == 'developer') ? 'selected' : '' ?>>Developer</option>
+                                    <option value="qa" <?= (isset($_POST['role']) && $_POST['role'] == 'qa') ? 'selected' : '' ?>>QA</option>
                                 </select>
+                                <div class="invalid-feedback">Please select a role.</div>
                             </div>
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Status</label>
-                                <select class="form-select" name="status" required>
-                                    <option value="active">Active</option>
-                                    <option value="inactive">Inactive</option>
+                                <label class="form-label">Status <span class="text-danger">*</span></label>
+                                <select class="form-select" name="status" id="create_status" required>
+                                    <option value="">Select Status</option>
+                                    <option value="active" <?= (isset($_POST['status']) && $_POST['status'] == 'active') ? 'selected' : '' ?>>Active</option>
+                                    <option value="inactive" <?= (isset($_POST['status']) && $_POST['status'] == 'inactive') ? 'selected' : '' ?>>Inactive</option>
                                 </select>
+                                <div class="invalid-feedback">Please select a status.</div>
                             </div>
                         </div>
                     </div>
@@ -407,37 +632,60 @@ $user_stats = $db->query("
                     <h5 class="modal-title">Edit User</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form method="POST">
+                <form method="POST" id="editUserForm" onsubmit="return validateEditUserForm()">
                     <input type="hidden" name="id" id="edit_user_id">
                     <div class="modal-body">
                         <div class="mb-3">
-                            <label class="form-label">Full Name</label>
-                            <input type="text" class="form-control" name="name" id="edit_user_name" required>
+                            <label class="form-label">Full Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" name="name" id="edit_user_name" required
+                                   minlength="2" maxlength="100">
+                            <div class="invalid-feedback">Please enter a valid name (2-100 characters).</div>
                         </div>
+                        
                         <div class="mb-3">
-                            <label class="form-label">Email Address</label>
-                            <input type="email" class="form-control" name="email" id="edit_user_email" required>
+                            <label class="form-label">Email Address <span class="text-danger">*</span></label>
+                            <input type="email" class="form-control" name="email" id="edit_user_email" required
+                                   maxlength="255">
+                            <div class="invalid-feedback">Please enter a valid email address.</div>
                         </div>
+                        
                         <div class="mb-3">
                             <label class="form-label">New Password</label>
-                            <input type="password" class="form-control" name="password" placeholder="Leave blank to keep current password">
+                            <input type="password" class="form-control" name="password" id="edit_password"
+                                   placeholder="Leave blank to keep current password"
+                                   minlength="6" oninput="checkEditPasswordStrength()">
+                            <div class="password-strength" id="editPasswordStrength"></div>
+                            <div class="password-requirements" id="editPasswordRequirements">
+                                <small class="text-muted">Password must contain:</small>
+                                <ul>
+                                    <li id="edit-req-length">At least 6 characters</li>
+                                    <li id="edit-req-uppercase">One uppercase letter</li>
+                                    <li id="edit-req-lowercase">One lowercase letter</li>
+                                    <li id="edit-req-number">One number</li>
+                                    <li id="edit-req-special">One special character</li>
+                                </ul>
+                            </div>
+                            <div class="invalid-feedback" id="editPasswordError"></div>
                             <small class="text-muted">Minimum 6 characters</small>
                         </div>
+                        
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Role</label>
+                                <label class="form-label">Role <span class="text-danger">*</span></label>
                                 <select class="form-select" name="role" id="edit_user_role" required>
                                     <option value="manager">Manager</option>
                                     <option value="developer">Developer</option>
                                     <option value="qa">QA</option>
                                 </select>
+                                <div class="invalid-feedback">Please select a role.</div>
                             </div>
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Status</label>
+                                <label class="form-label">Status <span class="text-danger">*</span></label>
                                 <select class="form-select" name="status" id="edit_user_status" required>
                                     <option value="active">Active</option>
                                     <option value="inactive">Inactive</option>
                                 </select>
+                                <div class="invalid-feedback">Please select a status.</div>
                             </div>
                         </div>
                     </div>
@@ -467,9 +715,294 @@ $user_stats = $db->query("
                     document.getElementById('edit_user_role').value = user.role;
                     document.getElementById('edit_user_status').value = user.status;
                     
+                    // Clear password fields
+                    document.getElementById('edit_password').value = '';
+                    document.getElementById('editPasswordStrength').className = 'password-strength';
+                    document.getElementById('editPasswordRequirements').style.display = 'none';
+                    
                     editModal.show();
                 });
             });
+            
+            // Auto-open modal if there was a form error
+            <?php if (isset($error) && isset($_POST['create_user'])): ?>
+                var createUserModal = new bootstrap.Modal(document.getElementById('createUserModal'));
+                createUserModal.show();
+            <?php endif; ?>
+        });
+        
+        // Password strength checker for create form
+        function checkCreatePasswordStrength() {
+            const password = document.getElementById('create_password').value;
+            const strengthBar = document.getElementById('createPasswordStrength');
+            const requirements = document.getElementById('createPasswordRequirements');
+            
+            if (password.length === 0) {
+                strengthBar.className = 'password-strength';
+                requirements.style.display = 'none';
+                return;
+            }
+            
+            requirements.style.display = 'block';
+            
+            // Check requirements
+            const hasLength = password.length >= 6;
+            const hasUppercase = /[A-Z]/.test(password);
+            const hasLowercase = /[a-z]/.test(password);
+            const hasNumber = /[0-9]/.test(password);
+            const hasSpecial = /[^A-Za-z0-9]/.test(password);
+            
+            // Update requirement indicators
+            document.getElementById('create-req-length').style.color = hasLength ? 'green' : 'red';
+            document.getElementById('create-req-uppercase').style.color = hasUppercase ? 'green' : 'red';
+            document.getElementById('create-req-lowercase').style.color = hasLowercase ? 'green' : 'red';
+            document.getElementById('create-req-number').style.color = hasNumber ? 'green' : 'red';
+            document.getElementById('create-req-special').style.color = hasSpecial ? 'green' : 'red';
+            
+            // Calculate strength score
+            let score = 0;
+            if (hasLength) score++;
+            if (hasUppercase) score++;
+            if (hasLowercase) score++;
+            if (hasNumber) score++;
+            if (hasSpecial) score++;
+            
+            // Update strength bar
+            let strengthClass = '';
+            if (score <= 1) {
+                strengthClass = 'strength-weak';
+            } else if (score <= 2) {
+                strengthClass = 'strength-fair';
+            } else if (score <= 3) {
+                strengthClass = 'strength-good';
+            } else {
+                strengthClass = 'strength-strong';
+            }
+            
+            strengthBar.className = 'password-strength ' + strengthClass;
+        }
+        
+        // Password strength checker for edit form
+        function checkEditPasswordStrength() {
+            const password = document.getElementById('edit_password').value;
+            const strengthBar = document.getElementById('editPasswordStrength');
+            const requirements = document.getElementById('editPasswordRequirements');
+            
+            if (password.length === 0) {
+                strengthBar.className = 'password-strength';
+                requirements.style.display = 'none';
+                return;
+            }
+            
+            requirements.style.display = 'block';
+            
+            // Check requirements
+            const hasLength = password.length >= 6;
+            const hasUppercase = /[A-Z]/.test(password);
+            const hasLowercase = /[a-z]/.test(password);
+            const hasNumber = /[0-9]/.test(password);
+            const hasSpecial = /[^A-Za-z0-9]/.test(password);
+            
+            // Update requirement indicators
+            document.getElementById('edit-req-length').style.color = hasLength ? 'green' : 'red';
+            document.getElementById('edit-req-uppercase').style.color = hasUppercase ? 'green' : 'red';
+            document.getElementById('edit-req-lowercase').style.color = hasLowercase ? 'green' : 'red';
+            document.getElementById('edit-req-number').style.color = hasNumber ? 'green' : 'red';
+            document.getElementById('edit-req-special').style.color = hasSpecial ? 'green' : 'red';
+            
+            // Calculate strength score
+            let score = 0;
+            if (hasLength) score++;
+            if (hasUppercase) score++;
+            if (hasLowercase) score++;
+            if (hasNumber) score++;
+            if (hasSpecial) score++;
+            
+            // Update strength bar
+            let strengthClass = '';
+            if (score <= 1) {
+                strengthClass = 'strength-weak';
+            } else if (score <= 2) {
+                strengthClass = 'strength-fair';
+            } else if (score <= 3) {
+                strengthClass = 'strength-good';
+            } else {
+                strengthClass = 'strength-strong';
+            }
+            
+            strengthBar.className = 'password-strength ' + strengthClass;
+        }
+        
+        // Email validation
+        function validateEmail(email) {
+            const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            return re.test(email);
+        }
+        
+        // Name validation
+        function validateName(name) {
+            const re = /^[a-zA-Z\s\.\-']{2,100}$/;
+            return re.test(name);
+        }
+        
+        // Create user form validation
+        function validateCreateUserForm() {
+            const form = document.getElementById('createUserForm');
+            const name = document.getElementById('create_name').value.trim();
+            const email = document.getElementById('create_email').value.trim();
+            const password = document.getElementById('create_password').value;
+            const role = document.getElementById('create_role').value;
+            const status = document.getElementById('create_status').value;
+            
+            let isValid = true;
+            
+            // Validate name
+            if (!name || !validateName(name)) {
+                document.getElementById('create_name').classList.add('is-invalid');
+                isValid = false;
+            } else {
+                document.getElementById('create_name').classList.remove('is-invalid');
+            }
+            
+            // Validate email
+            if (!email || !validateEmail(email)) {
+                document.getElementById('create_email').classList.add('is-invalid');
+                isValid = false;
+            } else {
+                document.getElementById('create_email').classList.remove('is-invalid');
+            }
+            
+            // Validate password
+            const hasUppercase = /[A-Z]/.test(password);
+            const hasLowercase = /[a-z]/.test(password);
+            const hasNumber = /[0-9]/.test(password);
+            const hasSpecial = /[^A-Za-z0-9]/.test(password);
+            
+            if (!password || password.length < 6 || !hasUppercase || !hasLowercase || !hasNumber || !hasSpecial) {
+                document.getElementById('create_password').classList.add('is-invalid');
+                document.getElementById('createPasswordError').textContent = 'Password does not meet requirements.';
+                isValid = false;
+            } else {
+                document.getElementById('create_password').classList.remove('is-invalid');
+            }
+            
+            // Validate role
+            if (!role) {
+                document.getElementById('create_role').classList.add('is-invalid');
+                isValid = false;
+            } else {
+                document.getElementById('create_role').classList.remove('is-invalid');
+            }
+            
+            // Validate status
+            if (!status) {
+                document.getElementById('create_status').classList.add('is-invalid');
+                isValid = false;
+            } else {
+                document.getElementById('create_status').classList.remove('is-invalid');
+            }
+            
+            return isValid;
+        }
+        
+        // Edit user form validation
+        function validateEditUserForm() {
+            const form = document.getElementById('editUserForm');
+            const name = document.getElementById('edit_user_name').value.trim();
+            const email = document.getElementById('edit_user_email').value.trim();
+            const password = document.getElementById('edit_password').value;
+            const role = document.getElementById('edit_user_role').value;
+            const status = document.getElementById('edit_user_status').value;
+            
+            let isValid = true;
+            
+            // Validate name
+            if (!name || !validateName(name)) {
+                document.getElementById('edit_user_name').classList.add('is-invalid');
+                isValid = false;
+            } else {
+                document.getElementById('edit_user_name').classList.remove('is-invalid');
+            }
+            
+            // Validate email
+            if (!email || !validateEmail(email)) {
+                document.getElementById('edit_user_email').classList.add('is-invalid');
+                isValid = false;
+            } else {
+                document.getElementById('edit_user_email').classList.remove('is-invalid');
+            }
+            
+            // Validate password if provided
+            if (password) {
+                const hasUppercase = /[A-Z]/.test(password);
+                const hasLowercase = /[a-z]/.test(password);
+                const hasNumber = /[0-9]/.test(password);
+                const hasSpecial = /[^A-Za-z0-9]/.test(password);
+                
+                if (password.length < 6 || !hasUppercase || !hasLowercase || !hasNumber || !hasSpecial) {
+                    document.getElementById('edit_password').classList.add('is-invalid');
+                    document.getElementById('editPasswordError').textContent = 'Password does not meet requirements.';
+                    isValid = false;
+                } else {
+                    document.getElementById('edit_password').classList.remove('is-invalid');
+                }
+            }
+            
+            // Validate role
+            if (!role) {
+                document.getElementById('edit_user_role').classList.add('is-invalid');
+                isValid = false;
+            } else {
+                document.getElementById('edit_user_role').classList.remove('is-invalid');
+            }
+            
+            // Validate status
+            if (!status) {
+                document.getElementById('edit_user_status').classList.add('is-invalid');
+                isValid = false;
+            } else {
+                document.getElementById('edit_user_status').classList.remove('is-invalid');
+            }
+            
+            return isValid;
+        }
+        
+        // Real-time validation for create form
+        document.getElementById('create_name').addEventListener('input', function() {
+            if (validateName(this.value.trim())) {
+                this.classList.remove('is-invalid');
+            }
+        });
+        
+        document.getElementById('create_email').addEventListener('input', function() {
+            if (validateEmail(this.value.trim())) {
+                this.classList.remove('is-invalid');
+            }
+        });
+        
+        document.getElementById('create_role').addEventListener('change', function() {
+            if (this.value) {
+                this.classList.remove('is-invalid');
+            }
+        });
+        
+        document.getElementById('create_status').addEventListener('change', function() {
+            if (this.value) {
+                this.classList.remove('is-invalid');
+            }
+        });
+        
+        // Real-time validation for edit form
+        document.getElementById('edit_user_name').addEventListener('input', function() {
+            if (validateName(this.value.trim())) {
+                this.classList.remove('is-invalid');
+            }
+        });
+        
+        document.getElementById('edit_user_email').addEventListener('input', function() {
+            if (validateEmail(this.value.trim())) {
+                this.classList.remove('is-invalid');
+            }
         });
     </script>
 </body>
