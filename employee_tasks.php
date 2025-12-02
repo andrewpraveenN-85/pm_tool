@@ -43,8 +43,10 @@ if (!empty($employee_id)) {
         $tasks_query = "SELECT t.*, p.name as project_name,
                        COUNT(DISTINCT b.id) as bug_count,
                        DATEDIFF(t.end_datetime, CURDATE()) as days_remaining,
+                       -- Updated deadline status calculation
                        CASE 
-                           WHEN t.end_datetime < CURDATE() AND t.status != 'closed' THEN 'overdue'
+                           WHEN t.status = 'closed' AND t.updated_at > t.end_datetime THEN 'overdue'
+                           WHEN t.status != 'closed' AND t.end_datetime < CURDATE() THEN 'overdue'
                            WHEN t.end_datetime <= DATE_ADD(CURDATE(), INTERVAL 3 DAY) AND t.end_datetime >= CURDATE() THEN 'urgent'
                            ELSE 'normal'
                        END as deadline_status
@@ -70,11 +72,16 @@ if (!empty($employee_id)) {
             $tasks_by_status[$task['status']][] = $task;
         }
 
-        // Get task statistics for this employee
+        // Get task statistics for this employee with updated overdue calculation
         $stats_query = "SELECT 
             COUNT(DISTINCT t.id) as total_tasks,
             SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) as completed_tasks,
-            SUM(CASE WHEN t.end_datetime < CURDATE() AND t.status != 'closed' THEN 1 ELSE 0 END) as overdue_tasks,
+            -- Updated overdue calculation
+            SUM(CASE 
+                WHEN t.status = 'closed' AND t.updated_at > t.end_datetime THEN 1
+                WHEN t.status != 'closed' AND t.end_datetime < CURDATE() THEN 1
+                ELSE 0 
+            END) as overdue_tasks,
             COUNT(DISTINCT b.id) as total_bugs,
             COUNT(DISTINCT CASE WHEN b.status = 'open' THEN b.id END) as open_bugs
         FROM task_assignments ta
@@ -311,6 +318,28 @@ if (!empty($employee_id)) {
                                             } elseif ($task['deadline_status'] == 'urgent') {
                                                 $deadline_class = 'urgent-task';
                                             }
+                                            
+                                            // Calculate days overdue for closed tasks
+                                            $days_message = '';
+                                            if ($task['end_datetime']) {
+                                                $end_date = strtotime($task['end_datetime']);
+                                                if ($task['status'] == 'closed') {
+                                                    $updated_at = strtotime($task['updated_at']);
+                                                    if ($updated_at > $end_date) {
+                                                        $days_overdue = floor(($updated_at - $end_date) / (60 * 60 * 24));
+                                                        $days_message = $days_overdue . " days late";
+                                                    }
+                                                } else {
+                                                    $now = time();
+                                                    if ($now > $end_date) {
+                                                        $days_overdue = floor(($now - $end_date) / (60 * 60 * 24));
+                                                        $days_message = $days_overdue . " days overdue";
+                                                    } elseif (($end_date - $now) <= (3 * 24 * 60 * 60)) {
+                                                        $days_remaining = floor(($end_date - $now) / (60 * 60 * 24));
+                                                        $days_message = $days_remaining . " days left";
+                                                    }
+                                                }
+                                            }
                                         ?>
                                         <div class="task-card priority-<?= $task['priority'] ?> <?= $deadline_class ?>" 
                                              data-task-id="<?= $task['id'] ?>">
@@ -330,14 +359,12 @@ if (!empty($employee_id)) {
                                                         <i class="far fa-calendar-alt"></i> 
                                                         Deadline: <?= date('M d, Y', strtotime($task['end_datetime'])) ?>
                                                     </small>
-                                                    <?php if ($task['days_remaining'] !== null): ?>
+                                                    <?php if ($days_message): ?>
                                                         <span class="badge <?= 
-                                                            $task['days_remaining'] < 0 ? 'bg-danger' : 
-                                                            ($task['days_remaining'] <= 3 ? 'bg-warning text-dark' : 'bg-secondary')
+                                                            $task['deadline_status'] == 'overdue' ? 'bg-danger' : 
+                                                            ($task['deadline_status'] == 'urgent' ? 'bg-warning text-dark' : 'bg-secondary')
                                                         ?> deadline-badge">
-                                                            <?= $task['days_remaining'] < 0 ? 
-                                                                abs($task['days_remaining']) . ' days overdue' : 
-                                                                $task['days_remaining'] . ' days left' ?>
+                                                            <?= $days_message ?>
                                                         </span>
                                                     <?php endif; ?>
                                                 </div>

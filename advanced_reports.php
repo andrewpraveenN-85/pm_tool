@@ -30,14 +30,19 @@ if (!empty($employee_id)) {
     $employee_data = $emp_check->fetch(PDO::FETCH_ASSOC);
 
     if ($employee_data) {
-        // Advanced Statistics
+        // Advanced Statistics with updated overdue calculation
         $stats_query = "
             SELECT 
                 -- Task Metrics
                 COUNT(DISTINCT t.id) as total_tasks,
                 SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) as completed_tasks,
                 AVG(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) * 100 as completion_rate,
-                SUM(CASE WHEN t.status != 'closed' AND t.end_datetime < NOW() THEN 1 ELSE 0 END) as overdue_tasks,
+                -- Updated overdue calculation
+                SUM(CASE 
+                    WHEN t.status = 'closed' AND t.updated_at > t.end_datetime THEN 1
+                    WHEN t.status != 'closed' AND t.end_datetime < NOW() THEN 1
+                    ELSE 0 
+                END) as overdue_tasks,
                 
                 -- Time Metrics
                 AVG(TIMESTAMPDIFF(HOUR, t.created_at, t.updated_at)) as avg_completion_hours,
@@ -100,14 +105,19 @@ if (!empty($employee_id)) {
         ]);
         $weekly_trends = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        // Priority Analysis
+        // Priority Analysis with updated overdue calculation
         $priority_query = "
             SELECT 
                 t.priority,
                 COUNT(DISTINCT t.id) as task_count,
                 SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) as completed_count,
                 AVG(TIMESTAMPDIFF(HOUR, t.created_at, t.updated_at)) as avg_completion_hours,
-                SUM(CASE WHEN t.status != 'closed' AND t.end_datetime < NOW() THEN 1 ELSE 0 END) as overdue_count
+                -- Updated overdue calculation
+                SUM(CASE 
+                    WHEN t.status = 'closed' AND t.updated_at > t.end_datetime THEN 1
+                    WHEN t.status != 'closed' AND t.end_datetime < NOW() THEN 1
+                    ELSE 0 
+                END) as overdue_count
             FROM tasks t
             LEFT JOIN task_assignments ta ON t.id = ta.task_id
             WHERE ta.user_id = :employee_id

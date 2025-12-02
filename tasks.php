@@ -907,18 +907,35 @@ if (isset($_GET['edit_task'])) {
                                         <?php 
                                         $end_date = strtotime($task['end_datetime']);
                                         $now = time();
-                                        $diff = $end_date - $now;
-                                        $days = floor($diff / (60 * 60 * 24));
+                                        $updated_at = strtotime($task['updated_at']);
+                                        $status = $task['status'];
                                         
                                         $class = 'text-muted';
-                                        if ($days < 0) {
-                                            $class = 'text-danger';
-                                        } elseif ($days <= 2) {
-                                            $class = 'text-warning';
+                                        $message = '';
+                                        
+                                        if ($status == 'closed') {
+                                            // For closed tasks, check if it was closed after the due date
+                                            if ($updated_at > $end_date) {
+                                                $class = 'text-danger';
+                                                $days_overdue = floor(($updated_at - $end_date) / (60 * 60 * 24));
+                                                $message = " (Closed " . $days_overdue . " days late)";
+                                            }
+                                        } else {
+                                            // For non-closed tasks, check if current date is past due date
+                                            if ($now > $end_date) {
+                                                $class = 'text-danger';
+                                                $days_overdue = floor(($now - $end_date) / (60 * 60 * 24));
+                                                $message = " (Overdue by " . $days_overdue . " days)";
+                                            } elseif (($end_date - $now) <= (2 * 24 * 60 * 60)) {
+                                                $class = 'text-warning';
+                                                $days_remaining = floor(($end_date - $now) / (60 * 60 * 24));
+                                                $message = " (Due in " . $days_remaining . " days)";
+                                            }
                                         }
                                         ?>
                                         <span class="<?= $class ?>">
                                             <?= date('M j, Y', $end_date) ?>
+                                            <?= $message ?>
                                         </span>
                                     <?php else: ?>
                                         -

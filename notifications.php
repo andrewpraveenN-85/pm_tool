@@ -1,7 +1,7 @@
 <?php
 include 'config/database.php';
 include 'includes/auth.php';
-include 'includes/notifications.php';
+require_once 'includes/notifications.php';
 
 $database = new Database();
 $db = $database->getConnection();
@@ -16,13 +16,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $notification->markAllAsRead($_SESSION['user_id']);
         $success = "All notifications marked as read!";
     } elseif (isset($_POST['delete_read'])) {
-        $query = "DELETE FROM notifications WHERE user_id = :user_id AND is_read = 1";
-        $stmt = $db->prepare($query);
-        $stmt->bindParam(':user_id', $_SESSION['user_id']);
-        $stmt->execute();
+        $notification->deleteReadNotifications($_SESSION['user_id']);
         $success = "All read notifications deleted!";
     } elseif (isset($_POST['notification_id'])) {
         $notification->markAsRead($_POST['notification_id'], $_SESSION['user_id']);
+        // Redirect to avoid form resubmission
+        header("Location: notifications.php");
+        exit();
     }
 }
 
@@ -50,6 +50,7 @@ $unread_count = $notification->getUnreadCount($_SESSION['user_id']);
         .notification-item {
             border-left: 4px solid transparent;
             transition: all 0.2s ease;
+            cursor: pointer;
         }
         .notification-item:hover {
             background-color: #f8f9fa;
@@ -87,6 +88,7 @@ $unread_count = $notification->getUnreadCount($_SESSION['user_id']);
             align-items: center;
             justify-content: center;
             margin-right: 15px;
+            flex-shrink: 0;
         }
         .icon-critical {
             background-color: #dc3545;
@@ -114,6 +116,12 @@ $unread_count = $notification->getUnreadCount($_SESSION['user_id']);
         .action-buttons {
             display: flex;
             gap: 10px;
+        }
+        .notification-content {
+            flex-grow: 1;
+        }
+        .no-click {
+            pointer-events: none;
         }
     </style>
 </head>
@@ -171,6 +179,7 @@ $unread_count = $notification->getUnreadCount($_SESSION['user_id']);
                                     $is_unread = !$notif['is_read'];
                                     $icon_class = '';
                                     $icon_bg = '';
+                                    $border_class = '';
                                     
                                     // Determine icon based on notification type
                                     switch ($notif['type']) {
@@ -205,41 +214,32 @@ $unread_count = $notification->getUnreadCount($_SESSION['user_id']);
                                             $border_class = '';
                                     }
                                 ?>
-                                <div class="list-group-item notification-item <?= $is_unread ? 'notification-unread' : '' ?> <?= $border_class ?> p-4">
+                                <div class="list-group-item notification-item <?= $is_unread ? 'notification-unread' : '' ?> <?= $border_class ?> p-4" 
+                                     onclick="markAsRead(<?= $notif['id'] ?>, this)">
                                     <div class="d-flex align-items-start">
                                         <div class="notification-icon <?= $icon_bg ?>">
                                             <i class="<?= $icon_class ?>"></i>
                                         </div>
                                         
-                                        <div class="flex-grow-1">
+                                        <div class="notification-content">
                                             <div class="d-flex justify-content-between align-items-start">
                                                 <h6 class="mb-1 <?= $is_unread ? 'fw-bold' : '' ?>">
                                                     <?= htmlspecialchars($notif['title']) ?>
                                                 </h6>
-                                                <div class="d-flex align-items-center gap-2">
+                                                <div class="d-flex align-items-center gap-2 no-click">
                                                     <small class="text-muted notification-date">
                                                         <i class="far fa-clock"></i> 
                                                         <?= date('M j, Y g:i A', strtotime($notif['created_at'])) ?>
                                                     </small>
-                                                    
-                                                    <?php if ($is_unread): ?>
-                                                    <form method="POST" class="mark-read-form">
-                                                        <input type="hidden" name="notification_id" value="<?= $notif['id'] ?>">
-                                                        <button type="submit" class="btn btn-link btn-sm text-decoration-none p-0" 
-                                                                title="Mark as read">
-                                                            <i class="fas fa-check text-success"></i>
-                                                        </button>
-                                                    </form>
-                                                    <?php endif; ?>
                                                 </div>
                                             </div>
                                             
                                             <p class="mb-2"><?= htmlspecialchars($notif['message']) ?></p>
                                             
-                                            <div class="d-flex justify-content-between align-items-center">
+                                            <div class="d-flex justify-content-between align-items-center no-click">
                                                 <small class="text-muted">
                                                     <span class="badge bg-light text-dark border">
-                                                        <i class="fas fa-tag me-1"></i> <?= ucfirst($notif['type']) ?>
+                                                        <i class="fas fa-tag me-1"></i> <?= ucfirst(str_replace('_', ' ', $notif['type'])) ?>
                                                     </span>
                                                     <?php if ($is_unread): ?>
                                                         <span class="badge bg-primary ms-2">Unread</span>
@@ -248,8 +248,8 @@ $unread_count = $notification->getUnreadCount($_SESSION['user_id']);
                                                     <?php endif; ?>
                                                 </small>
                                                 
-                                                <?php if ($notif['related_id'] && $notif['related_type']): ?>
-                                                    <a href="<?= $notif['related_type'] ?>.php?id=<?= $notif['related_id'] ?>" 
+                                                <?php if (!empty($notif['related_id']) && !empty($notif['related_type'])): ?>
+                                                    <a href="<?= htmlspecialchars($notif['related_type']) ?>.php?id=<?= $notif['related_id'] ?>" 
                                                        class="btn btn-sm btn-outline-primary">
                                                         View Details
                                                     </a>
@@ -262,104 +262,72 @@ $unread_count = $notification->getUnreadCount($_SESSION['user_id']);
                             </div>
                             
                             <!-- Pagination -->
+                            <?php if (count($all_notifications) > 20): ?>
                             <div class="card-footer d-flex justify-content-between align-items-center">
                                 <small class="text-muted">
                                     Showing <?= count($all_notifications) ?> notifications
                                 </small>
-                                <div>
-                                    <?php if (count($all_notifications) > 20): ?>
-                                        <nav aria-label="Notification pagination">
-                                            <ul class="pagination pagination-sm mb-0">
-                                                <li class="page-item disabled">
-                                                    <a class="page-link" href="#" tabindex="-1">Previous</a>
-                                                </li>
-                                                <li class="page-item active"><a class="page-link" href="#">1</a></li>
-                                                <li class="page-item"><a class="page-link" href="#">2</a></li>
-                                                <li class="page-item"><a class="page-link" href="#">3</a></li>
-                                                <li class="page-item">
-                                                    <a class="page-link" href="#">Next</a>
-                                                </li>
-                                            </ul>
-                                        </nav>
-                                    <?php endif; ?>
-                                </div>
+                                <nav aria-label="Notification pagination">
+                                    <ul class="pagination pagination-sm mb-0">
+                                        <li class="page-item disabled">
+                                            <a class="page-link" href="#" tabindex="-1">Previous</a>
+                                        </li>
+                                        <li class="page-item active"><a class="page-link" href="#">1</a></li>
+                                        <li class="page-item"><a class="page-link" href="#">2</a></li>
+                                        <li class="page-item"><a class="page-link" href="#">3</a></li>
+                                        <li class="page-item">
+                                            <a class="page-link" href="#">Next</a>
+                                        </li>
+                                    </ul>
+                                </nav>
                             </div>
+                            <?php endif; ?>
                         <?php endif; ?>
                     </div>
                 </div>
-                
-                <!-- Notification Settings -->
-                <?php if ($_SESSION['user_role'] == 'manager'): ?>
-                <div class="card mt-4">
-                    <div class="card-header">
-                        <h5 class="mb-0">Notification Settings</h5>
-                    </div>
-                    <div class="card-body">
-                        <form method="POST">
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" id="emailNotifications" checked>
-                                        <label class="form-check-label" for="emailNotifications">
-                                            Email notifications
-                                        </label>
-                                        <small class="d-block text-muted">Receive email notifications for important updates</small>
-                                    </div>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" id="pushNotifications" checked>
-                                        <label class="form-check-label" for="pushNotifications">
-                                            In-app notifications
-                                        </label>
-                                        <small class="d-block text-muted">Show notifications within the application</small>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">Email Frequency</label>
-                                    <select class="form-select">
-                                        <option value="immediate" selected>Immediately</option>
-                                        <option value="hourly">Hourly digest</option>
-                                        <option value="daily">Daily digest</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">Notification Types</label>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="taskNotifications" checked>
-                                        <label class="form-check-label" for="taskNotifications">
-                                            Task updates
-                                        </label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="bugNotifications" checked>
-                                        <label class="form-check-label" for="bugNotifications">
-                                            Bug reports
-                                        </label>
-                                    </div>
-                                    <div class="form-check">
-                                        <input class="form-check-input" type="checkbox" id="deadlineNotifications" checked>
-                                        <label class="form-check-label" for="deadlineNotifications">
-                                            Deadline warnings
-                                        </label>
-                                    </div>
-                                </div>
-                            </div>
-                            <button type="submit" class="btn btn-primary">
-                                <i class="fas fa-save"></i> Save Settings
-                            </button>
-                        </form>
-                    </div>
-                </div>
-                <?php endif; ?>
             </div>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        function markAsRead(notificationId, element) {
+            // Don't trigger if clicking on a button or link
+            if (event.target.tagName === 'BUTTON' || event.target.tagName === 'A' || 
+                event.target.closest('button') || event.target.closest('a')) {
+                return;
+            }
+            
+            // Send AJAX request to mark as read
+            const formData = new FormData();
+            formData.append('notification_id', notificationId);
+            
+            fetch('notifications.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                if (response.ok) {
+                    // Update UI
+                    element.classList.remove('notification-unread');
+                    element.querySelector('.fw-bold')?.classList.remove('fw-bold');
+                    element.querySelector('.badge.bg-primary')?.classList.replace('bg-primary', 'bg-secondary');
+                    element.querySelector('.badge.bg-primary')?.textContent = 'Read';
+                    
+                    // Update unread count
+                    const unreadBadge = document.querySelector('.badge.bg-danger');
+                    if (unreadBadge) {
+                        const currentCount = parseInt(unreadBadge.textContent);
+                        if (currentCount > 1) {
+                            unreadBadge.textContent = currentCount - 1;
+                        } else {
+                            unreadBadge.remove();
+                        }
+                    }
+                }
+            });
+        }
+
         // Auto-refresh notifications every 30 seconds
         setInterval(() => {
             fetch('get_notifications.php')
@@ -385,24 +353,6 @@ $unread_count = $notification->getUnreadCount($_SESSION['user_id']);
                     }
                 });
         }, 30000);
-
-        // Mark as read on click
-        document.addEventListener('DOMContentLoaded', function() {
-            const notificationItems = document.querySelectorAll('.notification-item');
-            notificationItems.forEach(item => {
-                item.addEventListener('click', function(e) {
-                    // Don't trigger if clicking on a button or link
-                    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'A' || e.target.closest('button') || e.target.closest('a')) {
-                        return;
-                    }
-                    
-                    const form = this.querySelector('.mark-read-form');
-                    if (form) {
-                        form.submit();
-                    }
-                });
-            });
-        });
     </script>
 </body>
 <footer class="bg-dark text-light text-center py-3 mt-5">

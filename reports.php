@@ -31,12 +31,18 @@ $project_stats = $db->query("
     GROUP BY p.id, p.name
 ")->fetchAll(PDO::FETCH_ASSOC);
 
-// Overdue tasks
+// Overdue tasks - updated calculation
 $overdue_tasks = $db->query("
     SELECT t.*, p.name as project_name 
     FROM tasks t 
     LEFT JOIN projects p ON t.project_id = p.id 
-    WHERE t.end_datetime < NOW() AND t.status != 'closed'
+    WHERE (
+        -- Tasks closed after the deadline
+        (t.status = 'closed' AND t.updated_at > t.end_datetime)
+        OR 
+        -- Tasks not closed and past the deadline
+        (t.status != 'closed' AND t.end_datetime < NOW())
+    )
 ")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
@@ -112,11 +118,26 @@ $overdue_tasks = $db->query("
                                             <th>Project</th>
                                             <th>Priority</th>
                                             <th>Due Date</th>
+                                            <th>Closed Date</th>
                                             <th>Status</th>
+                                            <th>Days Overdue</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <?php foreach ($overdue_tasks as $task): ?>
+                                        <?php foreach ($overdue_tasks as $task): 
+                                            $end_date = strtotime($task['end_datetime']);
+                                            $days_overdue = 0;
+                                            $closed_date = '';
+                                            
+                                            if ($task['status'] == 'closed') {
+                                                $updated_at = strtotime($task['updated_at']);
+                                                $days_overdue = floor(($updated_at - $end_date) / (60 * 60 * 24));
+                                                $closed_date = date('M j, Y', $updated_at);
+                                            } else {
+                                                $now = time();
+                                                $days_overdue = floor(($now - $end_date) / (60 * 60 * 24));
+                                            }
+                                        ?>
                                         <tr>
                                             <td><?= htmlspecialchars($task['name']) ?></td>
                                             <td><?= htmlspecialchars($task['project_name']) ?></td>
@@ -129,8 +150,24 @@ $overdue_tasks = $db->query("
                                                     <?= ucfirst($task['priority']) ?>
                                                 </span>
                                             </td>
-                                            <td class="text-danger"><?= date('M j, Y H:i', strtotime($task['end_datetime'])) ?></td>
-                                            <td><?= ucfirst(str_replace('_', ' ', $task['status'])) ?></td>
+                                            <td class="text-muted"><?= date('M j, Y', $end_date) ?></td>
+                                            <td>
+                                                <?php if ($task['status'] == 'closed'): ?>
+                                                    <span class="text-danger"><?= $closed_date ?></span>
+                                                <?php else: ?>
+                                                    <span class="text-muted">Not closed</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td>
+                                                <span class="badge bg-<?= 
+                                                    $task['status'] == 'closed' ? 'success' : 
+                                                    ($task['status'] == 'in_progress' ? 'primary' : 
+                                                    ($task['status'] == 'todo' ? 'warning' : 'info'))
+                                                ?>">
+                                                    <?= ucfirst(str_replace('_', ' ', $task['status'])) ?>
+                                                </span>
+                                            </td>
+                                            <td class="text-danger fw-bold"><?= $days_overdue ?> days</td>
                                         </tr>
                                         <?php endforeach; ?>
                                     </tbody>

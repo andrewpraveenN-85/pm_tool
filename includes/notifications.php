@@ -54,7 +54,9 @@ class Notification {
                         $user_id,
                         'Task Deadline Approaching',
                         "Task '{$task['name']}' is due in less than {$warning_hours} hours",
-                        'deadline'
+                        'deadline',
+                        $task['id'],
+                        'task'
                     );
 
                     if ($this->emailService && isset($assignee_emails[$index])) {
@@ -77,7 +79,9 @@ class Notification {
                     $task['manager_id'],
                     'Task Deadline Approaching', 
                     "Task '{$task['name']}' is due in less than {$warning_hours} hours",
-                    'deadline'
+                    'deadline',
+                    $task['id'],
+                    'task'
                 );
 
                 if ($this->emailService && !empty($task['manager_email'])) {
@@ -120,7 +124,9 @@ class Notification {
                 $user_id,
                 'New Task Assignment',
                 "You have been assigned to task: '{$task['name']}'",
-                'assignment'
+                'assignment',
+                $task_id,
+                'task'
             );
 
             if ($this->emailService) {
@@ -168,7 +174,9 @@ class Notification {
                 $user_id,
                 'Task Updated',
                 "Task '{$task['name']}' has been updated",
-                'task_update'
+                'task_update',
+                $task_id,
+                'task'
             );
 
             if ($this->emailService) {
@@ -220,7 +228,9 @@ class Notification {
                 $user_id,
                 'Task Status Updated',
                 "Task '{$task['name']}' status has been changed to: {$status_display}",
-                'status_update'
+                'status_update',
+                $task_id,
+                'task'
             );
 
             if ($this->emailService) {
@@ -249,7 +259,9 @@ class Notification {
             $manager_id,
             'Task Status Updated',
             "Task '{$task['name']}' status has been changed to: {$status_display}",
-            'status_update'
+            'status_update',
+            $task_id,
+            'task'
         );
 
         if ($this->emailService) {
@@ -293,7 +305,9 @@ class Notification {
                 $bug['manager_id'],
                 'New Bug Reported',
                 "A new {$bug['priority']} priority bug '{$bug['name']}' has been reported for task: '{$bug['task_name']}'",
-                'bug_report'
+                'bug_report',
+                $bug_id,
+                'bug'
             );
 
             if ($this->emailService && !empty($bug['manager_email'])) {
@@ -342,7 +356,9 @@ class Notification {
                 $bug['manager_id'],
                 'Bug Updated',
                 "Bug '{$bug['name']}' has been updated for task: '{$bug['task_name']}'",
-                'bug_update'
+                'bug_update',
+                $bug_id,
+                'bug'
             );
 
             if ($this->emailService && !empty($bug['manager_email'])) {
@@ -362,7 +378,9 @@ class Notification {
                 $assignee['user_id'],
                 'Bug Updated',
                 "Bug '{$bug['name']}' has been updated for task: '{$bug['task_name']}'",
-                'bug_update'
+                'bug_update',
+                $bug_id,
+                'bug'
             );
 
             if ($this->emailService && !empty($assignee['email'])) {
@@ -412,7 +430,9 @@ class Notification {
                 $user_id,
                 'Bug Status Updated',
                 "Bug '{$bug['name']}' status has been changed to: {$status_display}",
-                'bug_status_update'
+                'bug_status_update',
+                $bug_id,
+                'bug'
             );
 
             if ($this->emailService) {
@@ -442,7 +462,9 @@ class Notification {
             $manager_id,
             'Bug Status Updated', 
             "Bug '{$bug['name']}' status has been changed to: {$status_display}",
-            'bug_status_update'
+            'bug_status_update',
+            $bug_id,
+            'bug'
         );
 
         if ($this->emailService && !empty($bug['manager_email'])) {
@@ -478,7 +500,9 @@ class Notification {
                 $bug['manager_id'],
                 'Overdue Bug',
                 "Bug '{$bug['name']}' is overdue. It was due on " . date('M j, Y', strtotime($bug['end_datetime'])),
-                'overdue'
+                'overdue',
+                $bug['id'],
+                'bug'
             );
 
             // Send email notification
@@ -867,16 +891,18 @@ class Notification {
         return $result ? $result['setting_value'] : $default;
     }
 
-    private function createNotification($user_id, $title, $message, $type) {
+    private function createNotification($user_id, $title, $message, $type, $related_id = null, $related_type = null) {
         $query = "INSERT INTO " . $this->table_name . " 
-                  (user_id, title, message, type) 
-                  VALUES (:user_id, :title, :message, :type)";
+                  (user_id, title, message, type, related_id, related_type) 
+                  VALUES (:user_id, :title, :message, :type, :related_id, :related_type)";
         
         $stmt = $this->conn->prepare($query);
         $stmt->bindParam(':user_id', $user_id);
         $stmt->bindParam(':title', $title);
         $stmt->bindParam(':message', $message);
         $stmt->bindParam(':type', $type);
+        $stmt->bindParam(':related_id', $related_id);
+        $stmt->bindParam(':related_type', $related_type);
         
         return $stmt->execute();
     }
@@ -936,6 +962,17 @@ class Notification {
         
         $result = $stmt->fetch(PDO::FETCH_ASSOC);
         return $result['count'];
+    }
+
+    // NEW METHOD: Delete read notifications
+    public function deleteReadNotifications($user_id) {
+        $query = "DELETE FROM " . $this->table_name . " 
+                  WHERE user_id = :user_id AND is_read = 1";
+        
+        $stmt = $this->conn->prepare($query);
+        $stmt->bindParam(':user_id', $user_id);
+        
+        return $stmt->execute();
     }
 }
 ?>

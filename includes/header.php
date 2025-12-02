@@ -7,6 +7,15 @@ if (!class_exists('Notification')) {
 $database = new Database();
 $db = $database->getConnection();
 $notification = new Notification($db);
+
+// Get current page filename
+$current_page = basename($_SERVER['PHP_SELF']);
+
+// Function to check if page is active
+function isActive($page_name) {
+    global $current_page;
+    return $current_page == $page_name ? 'active' : '';
+}
 ?>
 <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
     <div class="container-fluid">
@@ -17,38 +26,39 @@ $notification = new Notification($db);
         <div class="collapse navbar-collapse" id="navbarNav">
             <ul class="navbar-nav me-auto">
                 <li class="nav-item">
-                    <a class="nav-link active" href="dashboard.php">Dashboard</a>
+                    <a class="nav-link <?= isActive('dashboard.php') ?>" href="dashboard.php">Dashboard</a>
                 </li>
                 <?php if ($_SESSION['user_role'] == 'manager'): ?>
                 <li class="nav-item">
-                    <a class="nav-link" href="projects.php">Projects</a>
+                    <a class="nav-link <?= isActive('projects.php') ?>" href="projects.php">Projects</a>
                 </li>
                 <?php endif; ?>
                 <li class="nav-item">
-                    <a class="nav-link" href="tasks.php">Tasks</a>
+                    <a class="nav-link <?= isActive('tasks.php') ?>" href="tasks.php">Tasks</a>
                 </li>
                 <li class="nav-item">
-                    <a class="nav-link" href="bugs.php">Bugs</a>
+                    <a class="nav-link <?= isActive('bugs.php') ?>" href="bugs.php">Bugs</a>
                 </li>
                 <!-- My Performance Link for All Users -->
                 <li class="nav-item">
-                    <a class="nav-link" href="my_performance.php">My Performance</a>
+                    <a class="nav-link <?= isActive('my_performance.php') ?>" href="my_performance.php">My Performance</a>
                 </li>
                 <?php if ($_SESSION['user_role'] == 'manager'): ?>
                 <li class="nav-item">
-                    <a class="nav-link" href="users.php">Users</a>
+                    <a class="nav-link <?= isActive('users.php') ?>" href="users.php">Users</a>
                 </li>
                 <!-- Reports Dropdown for Managers -->
                 <li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle" href="#" id="reportsDropdown" role="button" data-bs-toggle="dropdown">
+                    <a class="nav-link dropdown-toggle <?= in_array($current_page, ['reports.php', 'advanced_reports.php', 'employee_tasks.php', 'employee_performance.php', 'activity_logs_report.php']) ? 'active' : '' ?>" 
+                       href="#" id="reportsDropdown" role="button" data-bs-toggle="dropdown">
                         Reports
                     </a>
                     <ul class="dropdown-menu">
-                        <li><a class="dropdown-item" href="reports.php">Basic Reports</a></li>
-                        <li><a class="dropdown-item" href="advanced_reports.php">Advanced Analytics</a></li>
-                        <li><a class="dropdown-item" href="employee_tasks.php">Employee Tasks</a></li>
-                        <li><a class="dropdown-item" href="employee_performance.php">Employee Performance</a></li>
-                        <li><a class="dropdown-item" href="activity_logs_report.php">Activity Logs</a></li>
+                        <li><a class="dropdown-item <?= isActive('reports.php') ?>" href="reports.php">Basic Reports</a></li>
+                        <li><a class="dropdown-item <?= isActive('advanced_reports.php') ?>" href="advanced_reports.php">Advanced Analytics</a></li>
+                        <li><a class="dropdown-item <?= isActive('employee_tasks.php') ?>" href="employee_tasks.php">Employee Tasks</a></li>
+                        <li><a class="dropdown-item <?= isActive('employee_performance.php') ?>" href="employee_performance.php">Employee Performance</a></li>
+                        <li><a class="dropdown-item <?= isActive('activity_logs_report.php') ?>" href="activity_logs_report.php">Activity Logs</a></li>
                     </ul>
                 </li>
                 <?php endif; ?>
@@ -56,7 +66,8 @@ $notification = new Notification($db);
             <ul class="navbar-nav">
                 <!-- Notifications -->
                 <li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button" data-bs-toggle="dropdown">
+                    <a class="nav-link dropdown-toggle <?= isActive('notifications.php') ?>" 
+                       href="#" id="navbarDropdown" role="button" data-bs-toggle="dropdown">
                         <i class="fas fa-bell"></i>
                         <?php
                         $unread_count = $notification->getUnreadCount($_SESSION['user_id']);
@@ -85,13 +96,14 @@ $notification = new Notification($db);
                 </li>
                 <!-- User menu -->
                 <li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown">
+                    <a class="nav-link dropdown-toggle <?= in_array($current_page, ['profile.php', 'settings.php']) ? 'active' : '' ?>" 
+                       href="#" id="userDropdown" role="button" data-bs-toggle="dropdown">
                         <i class="fas fa-user"></i> <?= htmlspecialchars($_SESSION['user_name']) ?>
                     </a>
                     <ul class="dropdown-menu dropdown-menu-end">
-                        <li><a class="dropdown-item" href="profile.php">Profile</a></li>
+                        <li><a class="dropdown-item <?= isActive('profile.php') ?>" href="profile.php">Profile</a></li>
                         <?php if ($_SESSION['user_role'] == 'manager'): ?>
-                        <li><a class="dropdown-item" href="settings.php">Settings</a></li>
+                        <li><a class="dropdown-item <?= isActive('settings.php') ?>" href="settings.php">Settings</a></li>
                         <?php endif; ?>
                         <li><hr class="dropdown-divider"></li>
                         <li><a class="dropdown-item" href="logout.php">Logout</a></li>
