@@ -209,7 +209,7 @@ if (isset($_POST['backup_uploads'])) {
         }
         
         $timestamp = date('Y-m-d_H-i-s');
-        $uploads_dir = __DIR__ . '/../uploads/';
+        $uploads_dir = __DIR__ . '/uploads/';
         $backup_file = $backup_dir . 'uploads_backup_' . $timestamp . '.zip';
         
         if (is_dir($uploads_dir)) {
@@ -292,7 +292,7 @@ if (isset($_POST['backup_full'])) {
         system($command, $output);
         
         // Step 2: Copy uploads folder
-        $uploads_dir = __DIR__ . '/../uploads/';
+        $uploads_dir = __DIR__ . '/uploads/';
         if (is_dir($uploads_dir)) {
             $uploads_temp = $temp_dir . 'uploads/';
             mkdir($uploads_temp, 0755, true);
@@ -759,7 +759,7 @@ foreach ($settings as $setting) {
                                 <p><strong>Server IP:</strong> <?= $_SERVER['SERVER_ADDR'] ?></p>
                                 <p><strong>Backup Directory:</strong> 
                                     <?php 
-                                    $backup_dir = __DIR__ . '/../backups/';
+                                    $backup_dir = __DIR__ . '/backups/';
                                     echo is_dir($backup_dir) ? '<span class="text-success">Exists</span>' : '<span class="text-danger">Not found</span>';
                                     ?>
                                 </p>
@@ -779,7 +779,7 @@ foreach ($settings as $setting) {
                                 </p>
                                 <p><strong>Uploads Directory:</strong>
                                     <?php
-                                    $uploads_dir = __DIR__ . '/../uploads/';
+                                    $uploads_dir = __DIR__ . '/uploads/';
                                     echo is_dir($uploads_dir) ? '<span class="text-success">Exists</span>' : '<span class="text-danger">Not found</span>';
                                     ?>
                                 </p>
