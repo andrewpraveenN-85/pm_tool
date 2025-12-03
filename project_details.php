@@ -7,34 +7,6 @@ $db = $database->getConnection();
 $auth = new Auth($db);
 $auth->requireAuth();
 
-// Function to get profile picture URL with fallback
-function getProfilePicture($userImage, $userName, $size = 32) {
-    if (!empty($userImage) && file_exists($userImage)) {
-        return $userImage;
-    }
-    
-    // Generate avatar with user's initials
-    $initials = '';
-    $nameParts = explode(' ', $userName);
-    if (count($nameParts) > 0) {
-        $initials = strtoupper(substr($nameParts[0], 0, 1));
-        if (count($nameParts) > 1) {
-            $initials .= strtoupper(substr($nameParts[1], 0, 1));
-        }
-    }
-    
-    if (empty($initials)) {
-        $initials = 'U';
-    }
-    
-    return 'https://ui-avatars.com/api/?name=' . urlencode($initials) . '&background=007bff&color=fff&size=' . $size;
-}
-
-// Function to get default profile picture URL
-function getDefaultProfilePicture($size = 32) {
-    return 'https://ui-avatars.com/api/?name=User&background=007bff&color=fff&size=' . $size;
-}
-
 $project_id = $_GET['id'] ?? 0;
 
 // Get project details

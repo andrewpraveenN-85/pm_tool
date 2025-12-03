@@ -11,34 +11,6 @@ $auth->requireAuth();
 // Initialize notification system
 $notification = new Notification($db);
 
-// Function to get profile picture URL with fallback (same as users.php)
-function getProfilePicture($userImage, $userName, $size = 40) {
-    if (!empty($userImage) && file_exists($userImage)) {
-        return $userImage;
-    }
-    
-    // Generate avatar with user's initials
-    $initials = '';
-    $nameParts = explode(' ', $userName);
-    if (count($nameParts) > 0) {
-        $initials = strtoupper(substr($nameParts[0], 0, 1));
-        if (count($nameParts) > 1) {
-            $initials .= strtoupper(substr($nameParts[1], 0, 1));
-        }
-    }
-    
-    if (empty($initials)) {
-        $initials = 'U';
-    }
-    
-    return 'https://ui-avatars.com/api/?name=' . urlencode($initials) . '&background=007bff&color=fff&size=' . $size;
-}
-
-// Function to get default profile picture URL
-function getDefaultProfilePicture($size = 40) {
-    return 'https://ui-avatars.com/api/?name=User&background=007bff&color=fff&size=' . $size;
-}
-
 // Get filter parameters
 $project_filter = $_GET['project'] ?? '';
 $priority_filter = $_GET['priority'] ?? '';

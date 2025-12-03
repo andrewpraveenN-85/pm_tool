@@ -30,39 +30,6 @@ function getBaseUrl() {
 }
 
 /**
- * Get default profile picture URL
- */
-function getDefaultProfilePicture() {
-    // Use a default avatar from a reliable service
-    return 'https://ui-avatars.com/api/?name=User&background=007bff&color=fff&size=40';
-}
-
-/**
- * Get profile picture URL with fallback to default
- */
-function getProfilePicture($userImage, $userName) {
-    if (!empty($userImage) && file_exists($userImage)) {
-        return $userImage;
-    }
-    
-    // Generate avatar with user's initials
-    $initials = '';
-    $nameParts = explode(' ', $userName);
-    if (count($nameParts) > 0) {
-        $initials = strtoupper(substr($nameParts[0], 0, 1));
-        if (count($nameParts) > 1) {
-            $initials .= strtoupper(substr($nameParts[1], 0, 1));
-        }
-    }
-    
-    if (empty($initials)) {
-        $initials = 'U';
-    }
-    
-    return 'https://ui-avatars.com/api/?name=' . urlencode($initials) . '&background=007bff&color=fff&size=40';
-}
-
-/**
  * Send user creation email with access details
  */
 function sendUserCreationEmail($name, $email, $password, $role, $status) {
