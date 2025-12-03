@@ -19,5 +19,21 @@ class Database {
         }
         return $this->conn;
     }
+
+    public function getHost(){
+        return $this->host;
+    }
+
+    public function getDBName(){
+        return $this->db_name;
+    }
+
+    public function getUsername(){
+        return $this->username;
+    }
+
+    public function getPassword(){
+        return $this->password;
+    }
 }
 ?>

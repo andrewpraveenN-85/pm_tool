@@ -30,6 +30,39 @@ function getBaseUrl() {
 }
 
 /**
+ * Get default profile picture URL
+ */
+function getDefaultProfilePicture() {
+    // Use a default avatar from a reliable service
+    return 'https://ui-avatars.com/api/?name=User&background=007bff&color=fff&size=40';
+}
+
+/**
+ * Get profile picture URL with fallback to default
+ */
+function getProfilePicture($userImage, $userName) {
+    if (!empty($userImage) && file_exists($userImage)) {
+        return $userImage;
+    }
+    
+    // Generate avatar with user's initials
+    $initials = '';
+    $nameParts = explode(' ', $userName);
+    if (count($nameParts) > 0) {
+        $initials = strtoupper(substr($nameParts[0], 0, 1));
+        if (count($nameParts) > 1) {
+            $initials .= strtoupper(substr($nameParts[1], 0, 1));
+        }
+    }
+    
+    if (empty($initials)) {
+        $initials = 'U';
+    }
+    
+    return 'https://ui-avatars.com/api/?name=' . urlencode($initials) . '&background=007bff&color=fff&size=40';
+}
+
+/**
  * Send user creation email with access details
  */
 function sendUserCreationEmail($name, $email, $password, $role, $status) {
@@ -445,6 +478,9 @@ $user_stats = $db->query("
     <title>User Management - Task Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- DataTables CSS -->
+    <link href="https://cdn.datatables.net/1.13.4/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/responsive/2.4.1/css/responsive.bootstrap5.min.css" rel="stylesheet">
     <style>
         .password-strength {
             height: 5px;
@@ -478,6 +514,30 @@ $user_stats = $db->query("
         .activity-update { border-color: #007bff; }
         .activity-delete { border-color: #dc3545; }
         .activity-user { background-color: #f8f9fa; }
+        /* DataTables custom styling */
+        .dataTables_wrapper .dataTables_length,
+        .dataTables_wrapper .dataTables_filter,
+        .dataTables_wrapper .dataTables_info,
+        .dataTables_wrapper .dataTables_processing,
+        .dataTables_wrapper .dataTables_paginate {
+            color: #333;
+        }
+        .dataTables_wrapper .dataTables_filter input {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 4px 8px;
+        }
+        .dataTables_wrapper .dataTables_paginate .paginate_button {
+            padding: 4px 10px;
+            margin: 0 2px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .dataTables_wrapper .dataTables_paginate .paginate_button.current {
+            background: #007bff;
+            color: white !important;
+            border-color: #007bff;
+        }
     </style>
 </head>
 <body>
@@ -538,7 +598,7 @@ $user_stats = $db->query("
                     </div>
                     <div class="card-body">
                         <div class="table-responsive">
-                            <table class="table table-striped table-hover">
+                            <table id="usersTable" class="table table-striped table-hover w-100">
                                 <thead class="table-dark">
                                     <tr>
                                         <th>User</th>
@@ -551,12 +611,16 @@ $user_stats = $db->query("
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <?php foreach ($users as $user): ?>
+                                    <?php foreach ($users as $user): 
+                                        $profilePic = getProfilePicture($user['image'] ?? '', $user['name']);
+                                    ?>
                                     <tr>
                                         <td>
                                             <div class="d-flex align-items-center">
-                                                <img src="<?= $user['image'] ?: 'https://via.placeholder.com/40' ?>" 
-                                                     class="rounded-circle me-3" width="40" height="40">
+                                                <img src="<?= $profilePic ?>" 
+                                                     class="rounded-circle me-3" width="40" height="40"
+                                                     alt="<?= htmlspecialchars($user['name']) ?>"
+                                                     onerror="this.src='<?= getDefaultProfilePicture() ?>'">
                                                 <div>
                                                     <strong><?= htmlspecialchars($user['name']) ?></strong>
                                                     <?php if ($user['id'] == $_SESSION['user_id']): ?>
@@ -580,7 +644,9 @@ $user_stats = $db->query("
                                             </span>
                                         </td>
                                         <td><?= htmlspecialchars($user['created_by_name']) ?></td>
-                                        <td><?= date('M j, Y', strtotime($user['created_at'])) ?></td>
+                                        <td data-order="<?= strtotime($user['created_at']) ?>">
+                                            <?= date('M j, Y', strtotime($user['created_at'])) ?>
+                                        </td>
                                         <td>
                                             <div class="btn-group">
                                                 <button class="btn btn-sm btn-outline-primary edit-user" 
@@ -764,8 +830,49 @@ $user_stats = $db->query("
         </div>
     </div>
 
+    <!-- jQuery (required for DataTables) -->
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <!-- Bootstrap Bundle with Popper -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- DataTables JS -->
+    <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.4/js/dataTables.bootstrap5.min.js"></script>
+    <script src="https://cdn.datatables.net/responsive/2.4.1/js/dataTables.responsive.min.js"></script>
+    <script src="https://cdn.datatables.net/responsive/2.4.1/js/responsive.bootstrap5.min.js"></script>
+    
     <script>
+        // Initialize DataTable
+        $(document).ready(function() {
+            $('#usersTable').DataTable({
+                responsive: true,
+                pageLength: 10,
+                lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "All"]],
+                order: [[5, 'desc']], // Sort by Created At descending by default
+                language: {
+                    search: "Search users:",
+                    lengthMenu: "Show _MENU_ users",
+                    info: "Showing _START_ to _END_ of _TOTAL_ users",
+                    paginate: {
+                        first: "First",
+                        last: "Last",
+                        next: "Next",
+                        previous: "Previous"
+                    }
+                },
+                columnDefs: [
+                    {
+                        targets: [0, 1, 2, 3, 4, 5, 6],
+                        orderable: true
+                    },
+                    {
+                        targets: [6], // Actions column
+                        orderable: false,
+                        searchable: false
+                    }
+                ]
+            });
+        });
+        
         // Edit user functionality
         document.addEventListener('DOMContentLoaded', function() {
             const editButtons = document.querySelectorAll('.edit-user');

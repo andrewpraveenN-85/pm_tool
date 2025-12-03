@@ -6,7 +6,7 @@ $database = new Database();
 $db = $database->getConnection();
 $auth = new Auth($db);
 $auth->requireAuth();
-
+$auth->requireRole(['developer', 'qa']);
 $user_id = $_SESSION['user_id'];
 
 // Get user info

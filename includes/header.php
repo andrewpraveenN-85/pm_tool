@@ -40,9 +40,11 @@ function isActive($page_name) {
                     <a class="nav-link <?= isActive('bugs.php') ?>" href="bugs.php">Bugs</a>
                 </li>
                 <!-- My Performance Link for All Users -->
+                <?php if ($_SESSION['user_role'] != 'manager'): ?>
                 <li class="nav-item">
                     <a class="nav-link <?= isActive('my_performance.php') ?>" href="my_performance.php">My Performance</a>
                 </li>
+                <?php endif; ?>
                 <?php if ($_SESSION['user_role'] == 'manager'): ?>
                 <li class="nav-item">
                     <a class="nav-link <?= isActive('users.php') ?>" href="users.php">Users</a>
