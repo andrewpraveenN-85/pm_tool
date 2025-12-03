@@ -4,6 +4,34 @@ if (!class_exists('Notification')) {
     include 'includes/notifications.php';
 }
 
+// Function to get profile picture URL with fallback
+function getProfilePicture($userImage, $userName, $size = 32) {
+    if (!empty($userImage) && file_exists($userImage)) {
+        return $userImage;
+    }
+    
+    // Generate avatar with user's initials
+    $initials = '';
+    $nameParts = explode(' ', $userName);
+    if (count($nameParts) > 0) {
+        $initials = strtoupper(substr($nameParts[0], 0, 1));
+        if (count($nameParts) > 1) {
+            $initials .= strtoupper(substr($nameParts[1], 0, 1));
+        }
+    }
+    
+    if (empty($initials)) {
+        $initials = 'U';
+    }
+    
+    return 'https://ui-avatars.com/api/?name=' . urlencode($initials) . '&background=007bff&color=fff&size=' . $size;
+}
+
+// Function to get default profile picture URL
+function getDefaultProfilePicture($size = 32) {
+    return 'https://ui-avatars.com/api/?name=User&background=007bff&color=fff&size=' . $size;
+}
+
 $database = new Database();
 $db = $database->getConnection();
 $notification = new Notification($db);
@@ -16,10 +44,23 @@ function isActive($page_name) {
     global $current_page;
     return $current_page == $page_name ? 'active' : '';
 }
+
+// Get current user's profile image
+$user_id = $_SESSION['user_id'];
+$query = "SELECT image, name FROM users WHERE id = :user_id";
+$stmt = $db->prepare($query);
+$stmt->bindParam(':user_id', $user_id);
+$stmt->execute();
+$user_data = $stmt->fetch(PDO::FETCH_ASSOC);
+
+$user_name = $user_data['name'] ?? $_SESSION['user_name'];
+$user_image = $user_data['image'] ?? '';
+$user_profile_pic = getProfilePicture($user_image, $user_name, 28);
+$user_default_pic = getDefaultProfilePicture(28);
 ?>
 <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
     <div class="container-fluid">
-        <a class="navbar-brand" href="dashboard.php">Task Manager</a>
+        <a class="navbar-brand" href="dashboard.php">PerfTrack</a>
         <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
             <span class="navbar-toggler-icon"></span>
         </button>
@@ -100,18 +141,58 @@ function isActive($page_name) {
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle <?= in_array($current_page, ['profile.php', 'settings.php']) ? 'active' : '' ?>" 
                        href="#" id="userDropdown" role="button" data-bs-toggle="dropdown">
-                        <i class="fas fa-user"></i> <?= htmlspecialchars($_SESSION['user_name']) ?>
+                        <img src="<?= $user_profile_pic ?>" 
+                             class="rounded-circle me-1" 
+                             alt="<?= htmlspecialchars($user_name) ?>"
+                             style="width: 28px; height: 28px; object-fit: cover;"
+                             onerror="this.onerror=null; this.src='<?= $user_default_pic ?>'">
+                        <?= htmlspecialchars($user_name) ?>
                     </a>
                     <ul class="dropdown-menu dropdown-menu-end">
-                        <li><a class="dropdown-item <?= isActive('profile.php') ?>" href="profile.php">Profile</a></li>
+                        <li class="dropdown-header px-3 py-2">
+                            <div class="d-flex align-items-center">
+                                <img src="<?= $user_profile_pic ?>" 
+                                     class="rounded-circle me-2" 
+                                     alt="<?= htmlspecialchars($user_name) ?>"
+                                     style="width: 36px; height: 36px; object-fit: cover;"
+                                     onerror="this.onerror=null; this.src='<?= $user_default_pic ?>'">
+                                <div>
+                                    <strong><?= htmlspecialchars($user_name) ?></strong>
+                                    <div class="small text-muted"><?= ucfirst($_SESSION['user_role']) ?></div>
+                                </div>
+                            </div>
+                        </li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item <?= isActive('profile.php') ?>" href="profile.php">
+                            <i class="fas fa-user me-2"></i>Profile
+                        </a></li>
                         <?php if ($_SESSION['user_role'] == 'manager'): ?>
-                        <li><a class="dropdown-item <?= isActive('settings.php') ?>" href="settings.php">Settings</a></li>
+                        <li><a class="dropdown-item <?= isActive('settings.php') ?>" href="settings.php">
+                            <i class="fas fa-cog me-2"></i>Settings
+                        </a></li>
                         <?php endif; ?>
                         <li><hr class="dropdown-divider"></li>
-                        <li><a class="dropdown-item" href="logout.php">Logout</a></li>
+                        <li><a class="dropdown-item" href="logout.php">
+                            <i class="fas fa-sign-out-alt me-2"></i>Logout
+                        </a></li>
                     </ul>
                 </li>
             </ul>
         </div>
     </div>
 </nav>
+
+<style>
+    .navbar-nav .nav-item.dropdown:hover .dropdown-menu {
+        display: block;
+    }
+    .dropdown-header {
+        background-color: #f8f9fa;
+    }
+    .dropdown-item {
+        padding: 0.5rem 1rem;
+    }
+    .dropdown-item:hover {
+        background-color: #f8f9fa;
+    }
+</style>
