@@ -7,6 +7,34 @@ $db = $database->getConnection();
 $auth = new Auth($db);
 $auth->requireAuth();
 
+// Function to get profile picture URL with fallback
+function getProfilePicture($userImage, $userName, $size = 32) {
+    if (!empty($userImage) && file_exists($userImage)) {
+        return $userImage;
+    }
+    
+    // Generate avatar with user's initials
+    $initials = '';
+    $nameParts = explode(' ', $userName);
+    if (count($nameParts) > 0) {
+        $initials = strtoupper(substr($nameParts[0], 0, 1));
+        if (count($nameParts) > 1) {
+            $initials .= strtoupper(substr($nameParts[1], 0, 1));
+        }
+    }
+    
+    if (empty($initials)) {
+        $initials = 'U';
+    }
+    
+    return 'https://ui-avatars.com/api/?name=' . urlencode($initials) . '&background=007bff&color=fff&size=' . $size;
+}
+
+// Function to get default profile picture URL
+function getDefaultProfilePicture($size = 32) {
+    return 'https://ui-avatars.com/api/?name=User&background=007bff&color=fff&size=' . $size;
+}
+
 $project_id = $_GET['id'] ?? 0;
 
 // Get project details
@@ -26,10 +54,12 @@ if (!$project) {
     exit;
 }
 
-// Get project tasks
+// Get project tasks with assignee images
 $tasks_query = "
     SELECT t.*, 
+           GROUP_CONCAT(DISTINCT u.id) as assignee_ids,
            GROUP_CONCAT(DISTINCT u.name) as assignee_names,
+           GROUP_CONCAT(DISTINCT u.image) as assignee_images,
            COUNT(DISTINCT b.id) as bug_count
     FROM tasks t
     LEFT JOIN task_assignments ta ON t.id = ta.task_id
@@ -43,6 +73,26 @@ $tasks_stmt = $db->prepare($tasks_query);
 $tasks_stmt->bindParam(':project_id', $project_id);
 $tasks_stmt->execute();
 $tasks = $tasks_stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Process assignee data for each task
+foreach ($tasks as &$task) {
+    $assigneeIds = !empty($task['assignee_ids']) ? explode(',', $task['assignee_ids']) : [];
+    $assigneeNames = !empty($task['assignee_names']) ? explode(',', $task['assignee_names']) : [];
+    $assigneeImages = !empty($task['assignee_images']) ? explode(',', $task['assignee_images']) : [];
+    
+    // Create array of assignees with their details
+    $assignees = [];
+    for ($i = 0; $i < count($assigneeIds); $i++) {
+        $assignees[] = [
+            'id' => $assigneeIds[$i] ?? '',
+            'name' => $assigneeNames[$i] ?? 'Unknown',
+            'image' => $assigneeImages[$i] ?? ''
+        ];
+    }
+    
+    $task['assignees'] = $assignees;
+}
+unset($task); // Break the reference
 
 // Get project statistics
 $stats_query = "
@@ -93,6 +143,68 @@ if ($project['duration_days']) {
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <!-- Chart.js for progress visualization -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .assignee-avatar {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid #fff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .assignee-avatar:hover {
+            border-color: #007bff;
+            transform: scale(1.2);
+            z-index: 10;
+            position: relative;
+        }
+        .assignees-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+        .assignee-tooltip {
+            position: relative;
+            display: inline-block;
+        }
+        .assignee-tooltip .tooltip-text {
+            visibility: hidden;
+            width: 100px;
+            background-color: #333;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px;
+            position: absolute;
+            z-index: 100;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -50px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+        .assignee-tooltip:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+        .assignee-tooltip .tooltip-text::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #333 transparent transparent transparent;
+        }
+        .table td {
+            vertical-align: middle;
+        }
+    </style>
 </head>
 <body>
     <?php include 'includes/header.php'; ?>
@@ -346,11 +458,31 @@ if ($project['duration_days']) {
                                                 </span>
                                             </td>
                                             <td>
-                                                <?php if ($task['assignee_names']): ?>
-                                                    <?= htmlspecialchars($task['assignee_names']) ?>
-                                                <?php else: ?>
-                                                    <span class="text-muted">Unassigned</span>
-                                                <?php endif; ?>
+                                                <div class="assignees-container">
+                                                    <?php if (!empty($task['assignees'])): ?>
+                                                        <?php foreach ($task['assignees'] as $assignee): 
+                                                            $profilePic = getProfilePicture($assignee['image'], $assignee['name'], 28);
+                                                            $defaultPic = getDefaultProfilePicture(28);
+                                                        ?>
+                                                            <div class="assignee-tooltip">
+                                                                <img src="<?= $profilePic ?>" 
+                                                                     class="assignee-avatar" 
+                                                                     alt="<?= htmlspecialchars($assignee['name']) ?>"
+                                                                     title="<?= htmlspecialchars($assignee['name']) ?>"
+                                                                     onerror="this.onerror=null; this.src='<?= $defaultPic ?>'">
+                                                                <span class="tooltip-text"><?= htmlspecialchars($assignee['name']) ?></span>
+                                                            </div>
+                                                        <?php endforeach; ?>
+                                                    <?php else: ?>
+                                                        <div class="assignee-tooltip">
+                                                            <img src="<?= getDefaultProfilePicture(28) ?>" 
+                                                                 class="assignee-avatar" 
+                                                                 alt="Unassigned"
+                                                                 title="Unassigned">
+                                                            <span class="tooltip-text">Unassigned</span>
+                                                        </div>
+                                                    <?php endif; ?>
+                                                </div>
                                             </td>
                                             <td>
                                                 <?php if ($task['start_datetime']): ?>
