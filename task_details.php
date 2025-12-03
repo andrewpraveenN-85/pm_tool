@@ -14,7 +14,8 @@ $query = "
     SELECT t.*, p.name as project_name, p.id as project_id, 
            u_created.name as created_by_name,
            GROUP_CONCAT(DISTINCT u_assign.id) as assignee_ids,
-           GROUP_CONCAT(DISTINCT u_assign.name) as assignee_names
+           GROUP_CONCAT(DISTINCT u_assign.name) as assignee_names,
+           GROUP_CONCAT(DISTINCT u_assign.image) as assignee_images
     FROM tasks t
     LEFT JOIN projects p ON t.project_id = p.id
     LEFT JOIN users u_created ON t.created_by = u_created.id
@@ -186,7 +187,7 @@ $bugs_stmt->execute();
 $bugs = $bugs_stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get all developers for assignment
-$developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AND status = 'active'")->fetchAll(PDO::FETCH_ASSOC);
+$developers = $db->query("SELECT id, name, image FROM users WHERE role = 'developer' AND status = 'active'")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -198,19 +199,6 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <!-- TinyMCE WYSIWYG Editor -->
     <script src="https://cdn.jsdelivr.net/npm/tinymce@6.8.2/tinymce.min.js"></script>
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        tinymce.init({
-            selector: 'textarea.wysiwyg',
-            plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
-            toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
-            menubar: false,
-            height: 300,
-            promotion: false,
-            branding: false
-        });
-    });
-    </script>
     <style>
         .task-header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -238,6 +226,68 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
             padding: 8px;
             margin: 2px;
             background: #f8f9fa;
+        }
+        .assignee-avatar {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid #fff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .assignee-avatar:hover {
+            border-color: #007bff;
+            transform: scale(1.2);
+            z-index: 10;
+            position: relative;
+        }
+        .assignees-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 5px;
+        }
+        .assignee-tooltip {
+            position: relative;
+            display: inline-block;
+        }
+        .assignee-tooltip .tooltip-text {
+            visibility: hidden;
+            width: 100px;
+            background-color: #333;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px;
+            position: absolute;
+            z-index: 100;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -50px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+        .assignee-tooltip:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+        .assignee-tooltip .tooltip-text::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #333 transparent transparent transparent;
+        }
+        .form-select option img {
+            vertical-align: middle;
+            margin-right: 8px;
         }
     </style>
 </head>
@@ -308,10 +358,37 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
                                         </p>
                                     </div>
                                     <div class="col-md-6">
-                                        <p><strong>Assignees:</strong> 
-                                            <?= $task['assignee_names'] ? htmlspecialchars($task['assignee_names']) : 'Not assigned' ?>
-                                        </p>
-                                        <p><strong>Created By:</strong> <?= htmlspecialchars($task['created_by_name']) ?></p>
+                                        <p><strong>Assignees:</strong></p>
+                                        <div class="assignees-container">
+                                            <?php if (!empty($task['assignee_names'])): 
+                                                $assigneeIds = explode(',', $task['assignee_ids']);
+                                                $assigneeNames = explode(',', $task['assignee_names']);
+                                                $assigneeImages = !empty($task['assignee_images']) ? explode(',', $task['assignee_images']) : [];
+                                                
+                                                for ($i = 0; $i < count($assigneeIds); $i++):
+                                                    $assigneeId = $assigneeIds[$i] ?? '';
+                                                    $assigneeName = $assigneeNames[$i] ?? '';
+                                                    $assigneeImage = $assigneeImages[$i] ?? '';
+                                                    
+                                                    if (!empty($assigneeId)):
+                                                        $profilePic = !empty($assigneeImage) ? $assigneeImage : getDefaultProfilePicture(28);
+                                            ?>
+                                                <div class="assignee-tooltip">
+                                                    <img src="<?= $profilePic ?>" 
+                                                         class="assignee-avatar" 
+                                                         alt="<?= htmlspecialchars($assigneeName) ?>"
+                                                         title="<?= htmlspecialchars($assigneeName) ?>"
+                                                         onerror="this.onerror=null; this.src='<?= getDefaultProfilePicture(28) ?>'">
+                                                    <span class="tooltip-text"><?= htmlspecialchars($assigneeName) ?></span>
+                                                </div>
+                                            <?php 
+                                                    endif;
+                                                endfor;
+                                            else: ?>
+                                                <span class="text-muted">Not assigned</span>
+                                            <?php endif; ?>
+                                        </div>
+                                        <p class="mt-2"><strong>Created By:</strong> <?= htmlspecialchars($task['created_by_name']) ?></p>
                                         <p><strong>End Date:</strong> 
                                             <?php if ($task['end_datetime']): ?>
                                                 <?php 
@@ -439,8 +516,9 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
                                     <?php else: ?>
                                         <?php foreach ($comments as $comment): ?>
                                         <div class="d-flex mb-3">
-                                            <img src="<?= $comment['user_image'] ?: 'https://via.placeholder.com/40' ?>" 
-                                                 class="comment-avatar me-3" alt="<?= htmlspecialchars($comment['user_name']) ?>">
+                                            <img src="<?= $comment['user_image'] ?: getDefaultProfilePicture(40) ?>" 
+                                                 class="comment-avatar me-3" alt="<?= htmlspecialchars($comment['user_name']) ?>"
+                                                 onerror="this.onerror=null; this.src='<?= getDefaultProfilePicture(40) ?>'">
                                             <div class="flex-grow-1">
                                                 <div class="d-flex justify-content-between align-items-start">
                                                     <h6 class="mb-1"><?= htmlspecialchars($comment['user_name']) ?></h6>
@@ -564,13 +642,18 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
                     <div class="modal-body">
                         <div class="mb-3">
                             <label class="form-label">Select Developers</label>
-                            <select class="form-select" name="assignees[]" multiple size="8">
+                            <select class="form-select" name="assignees[]" multiple size="8" style="font-size: 14px;">
                                 <?php 
                                 $current_assignees = explode(',', $task['assignee_ids']);
                                 foreach ($developers as $dev): 
                                 ?>
                                     <option value="<?= $dev['id'] ?>" 
-                                        <?= in_array($dev['id'], $current_assignees) ? 'selected' : '' ?>>
+                                        <?= in_array($dev['id'], $current_assignees) ? 'selected' : '' ?>
+                                        style="padding: 8px;">
+                                        <img src="<?= $dev['image'] ?: getDefaultProfilePicture(20) ?>" 
+                                             class="rounded-circle me-2" width="20" height="20"
+                                             onerror="this.onerror=null; this.src='<?= getDefaultProfilePicture(20) ?>'"
+                                             style="vertical-align: middle;">
                                         <?= htmlspecialchars($dev['name']) ?>
                                     </option>
                                 <?php endforeach; ?>
@@ -589,6 +672,19 @@ $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AN
     <?php endif; ?>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        tinymce.init({
+            selector: 'textarea.wysiwyg',
+            plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
+            toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
+            menubar: false,
+            height: 300,
+            promotion: false,
+            branding: false
+        });
+    });
+    </script>
 </body>
 <footer class="bg-dark text-light text-center py-3 mt-5">
     <div class="container">
