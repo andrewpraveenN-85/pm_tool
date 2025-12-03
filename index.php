@@ -11,18 +11,16 @@ $db = $database->getConnection();
 $isLoggedIn = isset($_SESSION['user_id']) && !empty($_SESSION['user_id']);
 
 // Function to get default profile picture URL (same as users.php)
-function getDefaultProfilePicture()
-{
-    return 'https://ui-avatars.com/api/?name=User&background=007bff&color=fff&size=100';
+function getDefaultProfilePicture() {
+    return 'https://ui-avatars.com/api/?name=User&background=007bff&color=fff&size=150';
 }
 
 // Function to get profile picture URL with fallback (same as users.php)
-function getProfilePicture($userImage, $userName, $size = 100)
-{
+function getProfilePicture($userImage, $userName, $size = 150) {
     if (!empty($userImage) && file_exists($userImage)) {
         return $userImage;
     }
-
+    
     // Generate avatar with user's initials
     $initials = '';
     $nameParts = explode(' ', $userName);
@@ -32,11 +30,11 @@ function getProfilePicture($userImage, $userName, $size = 100)
             $initials .= strtoupper(substr($nameParts[1], 0, 1));
         }
     }
-
+    
     if (empty($initials)) {
         $initials = 'U';
     }
-
+    
     return 'https://ui-avatars.com/api/?name=' . urlencode($initials) . '&background=007bff&color=fff&size=' . $size;
 }
 
@@ -45,12 +43,11 @@ $end_date = date('Y-m-d');
 $start_date = date('Y-m-d', strtotime('-30 days'));
 
 // Function to calculate performance rating (same logic as employee_performance.php)
-function calculatePerformanceRating($employee)
-{
+function calculatePerformanceRating($employee) {
     $total_overdue = intval($employee['completed_late'] ?? 0) + intval($employee['pending_overdue'] ?? 0);
     $on_time_rate = floatval($employee['on_time_completion_rate'] ?? 0);
     $bugs_reported = intval($employee['bugs_reported'] ?? 0);
-
+    
     $performance_score = 0;
     $performance_rating = '';
     $performance_class = '';
@@ -107,6 +104,7 @@ function calculatePerformanceRating($employee)
         // Deduct points for bugs (2% per bug)
         $bugs_penalty = min($bugs_reported * 2, 30);
         $performance_score = max(0, $performance_score - $bugs_penalty);
+
     } elseif ($employee['role'] == 'qa') {
         // QA performance logic
         $tasks_reviewed = intval($employee['tasks_reviewed_closed'] ?? 0);
@@ -163,7 +161,7 @@ function calculatePerformanceRating($employee)
     ];
 }
 
-// Get current standings with same query as employee_performance.php but for recent period
+// Get current standings with same query as employee_performance.php but for recent period - ONLY FIRST RANK
 $performance_query = "
     SELECT DISTINCT
         u.id,
@@ -223,7 +221,7 @@ $performance_query = "
       AND u.status = 'active'
       AND COALESCE(tm.total_tasks, 0) > 0
     ORDER BY COALESCE(tm.completion_rate, 0) DESC, COALESCE(tm.total_tasks, 0) DESC
-    LIMIT 3
+    LIMIT 1
 ";
 
 $stmt = $db->prepare($performance_query);
@@ -232,17 +230,18 @@ $stmt->bindParam(':end_date', $end_date);
 $stmt->execute();
 $currentStandings = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Calculate performance ratings for each employee
-foreach ($currentStandings as &$employee) {
+// Calculate performance rating for the top performer
+if (!empty($currentStandings)) {
+    $performanceData = calculatePerformanceRating($currentStandings[0]);
+    $currentStandings[0] = array_merge($currentStandings[0], $performanceData);
 }
 ?>
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Current Performance Standings</title>
+    <title>Top Performer of the Month</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
@@ -252,205 +251,179 @@ foreach ($currentStandings as &$employee) {
             display: flex;
             flex-direction: column;
         }
-
-        .standing-card {
+        .champion-card {
             transition: all 0.3s ease;
-            border: 1px solid #e0e0e0;
-            border-radius: 10px;
+            border: 3px solid #FFD700;
+            border-radius: 15px;
             overflow: hidden;
-            background: white;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            background: linear-gradient(135deg, #ffffff 0%, #fff9e6 100%);
+            box-shadow: 0 10px 30px rgba(255, 215, 0, 0.3);
         }
-
-        .standing-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+        .champion-card:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 15px 40px rgba(255, 215, 0, 0.4);
         }
-
-        .rank-badge {
+        .champion-badge {
             position: absolute;
-            top: 15px;
-            left: 15px;
-            width: 50px;
-            height: 50px;
+            top: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100px;
+            height: 100px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: bold;
             color: white;
-            font-size: 1.4rem;
-            z-index: 1;
-        }
-
-        .rank-1 {
+            font-size: 2.5rem;
+            z-index: 2;
             background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
-            border: 3px solid #ffd700;
+            border: 5px solid white;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
         }
-
-        .rank-2 {
-            background: linear-gradient(135deg, #C0C0C0 0%, #A9A9A9 100%);
-            border: 3px solid #c0c0c0;
-        }
-
-        .rank-3 {
-            background: linear-gradient(135deg, #CD7F32 0%, #8B4513 100%);
-            border: 3px solid #cd7f32;
-        }
-
         .performance-badge {
-            font-size: 0.8rem;
-            padding: 5px 10px;
+            font-size: 0.9rem;
+            padding: 6px 12px;
             border-radius: 4px;
             font-weight: 600;
         }
-
-        .badge-excellent {
-            background-color: #28a745;
-            color: white;
-        }
-
-        .badge-very-good {
-            background-color: #17a2b8;
-            color: white;
-        }
-
-        .badge-good {
-            background-color: #ffc107;
-            color: black;
-        }
-
-        .badge-average {
-            background-color: #6c757d;
-            color: white;
-        }
-
-        .badge-needs-improvement {
-            background-color: #fd7e14;
-            color: white;
-        }
-
-        .badge-bad {
-            background-color: #dc3545;
-            color: white;
-        }
-
-        .badge-very-bad {
-            background-color: #721c24;
-            color: white;
-        }
-
-        .badge-fired {
-            background-color: #2d3436;
-            color: white;
-        }
-
+        .badge-excellent { background-color: #28a745; color: white; }
+        .badge-very-good { background-color: #17a2b8; color: white; }
+        .badge-good { background-color: #ffc107; color: black; }
+        .badge-average { background-color: #6c757d; color: white; }
+        .badge-needs-improvement { background-color: #fd7e14; color: white; }
+        .badge-bad { background-color: #dc3545; color: white; }
+        .badge-very-bad { background-color: #721c24; color: white; }
+        .badge-fired { background-color: #2d3436; color: white; }
         .progress-thin {
             height: 8px;
             border-radius: 4px;
             background-color: #e9ecef;
         }
-
         .period-info {
             font-size: 0.9rem;
             color: #6c757d;
         }
-
         .role-badge {
             font-size: 0.85rem;
             padding: 4px 10px;
             border-radius: 4px;
             font-weight: 600;
         }
-
-        .badge-developer {
-            background-color: #17a2b8;
-            color: white;
-        }
-
-        .badge-qa {
-            background-color: #ffc107;
-            color: black;
-        }
-
+        .badge-developer { background-color: #17a2b8; color: white; }
+        .badge-qa { background-color: #ffc107; color: black; }
         .page-title {
             color: #2c3e50;
             font-weight: 700;
             margin-bottom: 0.3rem;
-            font-size: 1.8rem;
+            font-size: 2rem;
         }
-
         .page-subtitle {
             color: #7f8c8d;
-            margin-bottom: 1.5rem;
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
         }
-
         .header-section {
             background: white;
-            padding: 1.5rem 0;
-            margin-bottom: 2rem;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            padding: 2rem 0;
+            margin-bottom: 3rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 0 0 20px 20px;
         }
-
+        .header-section h1 {
+            color: white;
+        }
+        .header-section p {
+            color: rgba(255, 255, 255, 0.9);
+        }
         .performance-score {
-            font-size: 1.8rem;
+            font-size: 2.5rem;
             font-weight: 700;
             color: #2c3e50;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.1);
         }
-
         .employee-name {
-            font-size: 1.2rem;
-            font-weight: 600;
+            font-size: 2rem;
+            font-weight: 700;
             color: #2c3e50;
-            margin-bottom: 0.2rem;
-        }
-
-        .employee-email {
-            font-size: 0.85rem;
-            color: #6c757d;
             margin-bottom: 0.5rem;
         }
-
+        .employee-email {
+            font-size: 1rem;
+            color: #6c757d;
+            margin-bottom: 1rem;
+        }
         .main-content {
             flex: 1;
         }
-
         .no-data-section {
-            min-height: 300px;
+            min-height: 400px;
             display: flex;
             align-items: center;
             justify-content: center;
             background: white;
-            border-radius: 10px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            padding: 2rem;
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            padding: 3rem;
         }
-
         .profile-img {
-            width: 100px;
-            height: 100px;
+            width: 150px;
+            height: 150px;
             border-radius: 50%;
             object-fit: cover;
-            border: 3px solid #e0e0e0;
-            background-color: #f8f9fa;
+            border: 5px solid #FFD700;
+            background-color: white;
+            padding: 5px;
         }
-
-        .default-profile-img {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 100px;
-            height: 100px;
-            border-radius: 50%;
-            border: 3px solid #e0e0e0;
-            background-color: #007bff;
-            color: white;
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+        .metric-box {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 10px;
+            border: 1px solid #e0e0e0;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .metric-value {
             font-size: 2rem;
-            font-weight: bold;
+            font-weight: 700;
+            color: #2c3e50;
+            margin-bottom: 0.5rem;
+        }
+        .metric-label {
+            font-size: 0.9rem;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .crown-icon {
+            color: #FFD700;
+            font-size: 1.5rem;
+            margin-right: 0.5rem;
+        }
+        .champion-title {
+            font-size: 1.5rem;
+            color: #2c3e50;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+        .stats-row {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin-top: 1.5rem;
         }
     </style>
 </head>
-
 <body>
     <!-- Navigation -->
     <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm">
@@ -473,19 +446,6 @@ foreach ($currentStandings as &$employee) {
         </div>
     </nav>
 
-    <!-- Page Header -->
-    <div class="header-section">
-        <div class="container">
-            <div class="text-center">
-                <h1 class="page-title">Top Performers</h1>
-                <p class="page-subtitle mb-0">
-                    <i class="fas fa-calendar-alt me-1"></i>
-                    Period: <?= date('M d', strtotime($start_date)) ?> - <?= date('M d, Y', strtotime($end_date)) ?>
-                </p>
-            </div>
-        </div>
-    </div>
-
     <!-- Main Content -->
     <div class="container main-content py-3">
         <?php if (empty($currentStandings)): ?>
@@ -503,134 +463,151 @@ foreach ($currentStandings as &$employee) {
                 </div>
             </div>
         <?php else: ?>
-            <!-- Current Standings - First 3 Best Performers -->
+            <!-- Champion Card - Only First Ranked User -->
+            <?php 
+                $employee = $currentStandings[0];
+                $performanceClass = 'badge-' . strtolower(str_replace(' ', '-', $employee['performance_rating']));
+                
+                // Get profile picture
+                $profilePic = getProfilePicture($employee['user_image'] ?? '', $employee['name'], 150);
+                $defaultPic = getDefaultProfilePicture();
+                
+                // Calculate on-time rate or QA efficiency
+                if ($employee['role'] == 'developer') {
+                    $efficiency_rate = floatval($employee['on_time_completion_rate'] ?? 0);
+                    $efficiency_label = 'On-Time Completion';
+                } else {
+                    $tasks_reviewed = intval($employee['tasks_reviewed_closed'] ?? 0);
+                    $tasks_in_review = intval($employee['tasks_in_review'] ?? 0);
+                    $total_qa_tasks = $tasks_reviewed + $tasks_in_review;
+                    $efficiency_rate = $total_qa_tasks > 0 ? ($tasks_reviewed / $total_qa_tasks) * 100 : 0;
+                    $efficiency_label = 'QA Efficiency';
+                }
+                
+                // Calculate completion rate
+                $completion_rate = floatval($employee['completion_rate'] ?? 0);
+            ?>
             <div class="row justify-content-center">
-                <?php foreach ($currentStandings as $index => $employee):
-                    $performanceData = calculatePerformanceRating($employee);
-                    $employee = array_merge($employee, $performanceData);
-                    $rank = $index + 1;
-                    $rankClass = $rank === 1 ? 'rank-1' : ($rank === 2 ? 'rank-2' : 'rank-3');
-                    $performanceClass = 'badge-' . strtolower(str_replace(' ', '-', $employee['performance_rating']));
-
-                    // Get profile picture using the same function as users.php
-                    $profilePic = getProfilePicture($employee['user_image'] ?? '', $employee['name'], 100);
-                    $defaultPic = getDefaultProfilePicture();
-
-                    // Calculate on-time rate or QA efficiency
-                    if ($employee['role'] == 'developer') {
-                        $efficiency_rate = floatval($employee['on_time_completion_rate'] ?? 0);
-                        $efficiency_label = 'On-Time';
-                    } else {
-                        $tasks_reviewed = intval($employee['tasks_reviewed_closed'] ?? 0);
-                        $tasks_in_review = intval($employee['tasks_in_review'] ?? 0);
-                        $total_qa_tasks = $tasks_reviewed + $tasks_in_review;
-                        $efficiency_rate = $total_qa_tasks > 0 ? ($tasks_reviewed / $total_qa_tasks) * 100 : 0;
-                        $efficiency_label = 'Efficiency';
-                    }
-
-                    // Determine card width based on rank
-                    $colClass = $rank === 1 ? 'col-lg-8 col-md-10' : 'col-lg-6 col-md-8';
-                ?>
-                    <div class="<?= $colClass ?> mb-4">
-                        <div class="standing-card p-4 position-relative">
-                            <div class="rank-badge <?= $rankClass ?>">
-                                <?= $rank ?>
-                            </div>
-                            <div class="row align-items-center">
-                                <div class="col-md-4 text-center mb-3 mb-md-0">
-                                    <div class="position-relative">
-                                        <img src="<?= $profilePic ?>"
-                                            class="profile-img"
-                                            alt="<?= htmlspecialchars($employee['name'] ?? 'Unknown') ?>"
-                                            onerror="this.onerror=null; this.src='<?= $defaultPic ?>'">
-                                    </div>
-                                </div>
-                                <div class="col-md-8">
-                                    <div class="mb-3">
-                                        <h3 class="employee-name"><?= htmlspecialchars($employee['name'] ?? 'Unknown') ?></h3>
-                                        <p class="employee-email mb-2">
-                                            <i class="fas fa-envelope me-1"></i>
-                                            <?= htmlspecialchars($employee['email'] ?? 'N/A') ?>
-                                        </p>
-                                        <div class="d-flex align-items-center gap-2 mb-2">
-                                            <span class="badge <?= $employee['role'] == 'developer' ? 'badge-developer' : 'badge-qa' ?> role-badge">
-                                                <?= strtoupper($employee['role'] ?? 'unknown') ?>
-                                            </span>
-                                            <span class="badge <?= $performanceClass ?> performance-badge">
-                                                <?= $employee['performance_rating'] ?>
-                                            </span>
-                                            <?php if ($employee['total_overdue'] > 0): ?>
-                                                <span class="badge bg-danger small">
-                                                    <i class="fas fa-clock me-1"></i><?= $employee['total_overdue'] ?> overdue
-                                                </span>
-                                            <?php endif; ?>
-                                        </div>
-                                    </div>
-
-                                    <div class="row">
-                                        <div class="col-6">
-                                            <div class="mb-3">
-                                                <div class="performance-score">
-                                                    <?= number_format($employee['performance_score'], 0) ?>%
-                                                </div>
-                                                <small class="text-muted">Performance Score</small>
-                                            </div>
-                                        </div>
-                                        <div class="col-6">
-                                            <div class="mb-3">
-                                                <div class="fw-bold" style="font-size: 1.2rem;">
-                                                    <?= htmlspecialchars($employee['completed_tasks'] ?? 0) ?>/<?= htmlspecialchars($employee['total_tasks'] ?? 0) ?>
-                                                </div>
-                                                <small class="text-muted">Tasks Completed</small>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div class="mb-3">
-                                        <div class="d-flex justify-content-between mb-1">
-                                            <small class="text-muted"><?= $efficiency_label ?> Rate</small>
-                                            <small class="fw-bold"><?= number_format($efficiency_rate, 1) ?>%</small>
-                                        </div>
-                                        <div class="progress progress-thin">
-                                            <div class="progress-bar 
-                                            <?php if ($employee['role'] == 'developer'): ?>
-                                                <?= $efficiency_rate >= 90 ? 'bg-success' : ($efficiency_rate >= 80 ? 'bg-info' : ($efficiency_rate >= 60 ? 'bg-warning' : 'bg-danger')) ?>
-                                            <?php else: ?>
-                                                <?= $efficiency_rate >= 90 ? 'bg-success' : ($efficiency_rate >= 80 ? 'bg-info' : ($efficiency_rate >= 70 ? 'bg-primary' : ($efficiency_rate >= 50 ? 'bg-secondary' : 'bg-warning'))) ?>
-                                            <?php endif; ?>"
-                                                style="width: <?= min(100, $efficiency_rate) ?>%">
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <?php if ($employee['role'] == 'qa'): ?>
-                                        <div class="small text-muted">
-                                            <i class="fas fa-check-circle me-1"></i>
-                                            <?= htmlspecialchars($employee['tasks_reviewed_closed'] ?? 0) ?> tasks reviewed
-                                            <span class="mx-2">•</span>
-                                            <i class="fas fa-hourglass-half me-1"></i>
-                                            <?= htmlspecialchars($employee['tasks_in_review'] ?? 0) ?> in review
-                                        </div>
-                                    <?php endif; ?>
-                                </div>
-                            </div>
+                <div class="col-lg-8 col-md-10 mb-4">
+                    <div class="champion-card p-5 position-relative">
+                        <div class="champion-badge">
+                            <i class="fas fa-crown"></i>
                         </div>
-                    </div>
-                <?php endforeach; ?>
-            </div>
-
-            <!-- Simple Login Note -->
-            <?php if (!$isLoggedIn): ?>
-                <div class="row mt-4">
-                    <div class="col-12">
-                        <div class="text-center">
-                            <p class="text-muted mb-2 small">
-                                <i class="fas fa-info-circle me-1"></i>
-                                Login to access detailed performance reports and full dashboard features
-                            </p>
+                        
+                        <div class="text-center mb-4 pt-4 mt-2">
+                            <h2 class="champion-title">Top Performer</h2>
+                        </div>
+                        
+                        <div class="row align-items-center">
+                            <div class="col-md-4 text-center mb-4 mb-md-0">
+                                <div class="position-relative">
+                                    <img src="<?= $profilePic ?>" 
+                                         class="profile-img"
+                                         alt="<?= htmlspecialchars($employee['name'] ?? 'Unknown') ?>"
+                                         onerror="this.onerror=null; this.src='<?= $defaultPic ?>'">
+                                </div>
+                            </div>
+                            <div class="col-md-8">
+                                <div class="text-center text-md-start">
+                                    <h1 class="employee-name"><?= htmlspecialchars($employee['name'] ?? 'Unknown') ?></h1>
+                                    <p class="employee-email mb-3">
+                                        <i class="fas fa-envelope me-1"></i>
+                                        <?= htmlspecialchars($employee['email'] ?? 'N/A') ?>
+                                    </p>
+                                    <div class="d-flex justify-content-center justify-content-md-start align-items-center gap-3 mb-4">
+                                        <span class="badge <?= $employee['role'] == 'developer' ? 'badge-developer' : 'badge-qa' ?> role-badge">
+                                            <i class="fas <?= $employee['role'] == 'developer' ? 'fa-code' : 'fa-bug' ?> me-1"></i>
+                                            <?= strtoupper($employee['role'] ?? 'unknown') ?>
+                                        </span>
+                                        <span class="badge <?= $performanceClass ?> performance-badge">
+                                            <?= $employee['performance_rating'] ?>
+                                        </span>
+                                        <?php if ($employee['total_overdue'] > 0): ?>
+                                            <span class="badge bg-danger small">
+                                                <i class="fas fa-clock me-1"></i><?= $employee['total_overdue'] ?> overdue
+                                            </span>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                                
+                                <!-- Performance Score -->
+                                <div class="text-center mb-4">
+                                    <div class="performance-score">
+                                        <?= number_format($employee['performance_score'], 0) ?>%
+                                    </div>
+                                    <small class="text-muted">Overall Performance Score</small>
+                                </div>
+                                
+                                <!-- Metrics Grid -->
+                                <div class="metrics-grid">
+                                    <div class="metric-box">
+                                        <div class="metric-value">
+                                            <?= htmlspecialchars($employee['completed_tasks'] ?? 0) ?>/<?= htmlspecialchars($employee['total_tasks'] ?? 0) ?>
+                                        </div>
+                                        <div class="metric-label">Tasks Completed</div>
+                                    </div>
+                                    
+                                    <div class="metric-box">
+                                        <div class="metric-value">
+                                            <?= number_format($completion_rate, 1) ?>%
+                                        </div>
+                                        <div class="metric-label">Completion Rate</div>
+                                    </div>
+                                    
+                                    <div class="metric-box">
+                                        <div class="metric-value">
+                                            <?= number_format($efficiency_rate, 1) ?>%
+                                        </div>
+                                        <div class="metric-label"><?= $efficiency_label ?></div>
+                                    </div>
+                                    
+                                    <div class="metric-box">
+                                        <div class="metric-value">
+                                            <?= number_format($employee['avg_completion_hours'] ?? 0, 1) ?>
+                                        </div>
+                                        <div class="metric-label">Avg Hours/Task</div>
+                                    </div>
+                                </div>
+                                
+                                <?php if ($employee['role'] == 'qa'): ?>
+                                <div class="stats-row">
+                                    <div class="row">
+                                        <div class="col-6 text-center">
+                                            <div class="metric-value text-success">
+                                                <?= htmlspecialchars($employee['tasks_reviewed_closed'] ?? 0) ?>
+                                            </div>
+                                            <div class="metric-label">Tasks Reviewed</div>
+                                        </div>
+                                        <div class="col-6 text-center">
+                                            <div class="metric-value text-warning">
+                                                <?= htmlspecialchars($employee['tasks_in_review'] ?? 0) ?>
+                                            </div>
+                                            <div class="metric-label">In Review</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <?php endif; ?>
+                            </div>
                         </div>
                     </div>
                 </div>
+            </div>
+            
+            <!-- Simple Login Note -->
+            <?php if (!$isLoggedIn): ?>
+            <div class="row mt-5">
+                <div class="col-12">
+                    <div class="text-center">
+                        <p class="text-muted mb-2">
+                            <i class="fas fa-info-circle me-1"></i>
+                            Login to access detailed performance reports and full dashboard features
+                        </p>
+                        <a href="login.php" class="btn btn-primary">
+                            <i class="fas fa-sign-in-alt me-2"></i>Login to Dashboard
+                        </a>
+                    </div>
+                </div>
+            </div>
             <?php endif; ?>
         <?php endif; ?>
     </div>
@@ -644,5 +621,4 @@ foreach ($currentStandings as &$employee) {
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
-
 </html>
