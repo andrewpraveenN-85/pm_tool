@@ -11,46 +11,87 @@ $auth->requireRole(['manager']);
 $start_date = $_GET['start_date'] ?? date('Y-m-01');
 $end_date = $_GET['end_date'] ?? date('Y-m-t');
 
-// Get all employees performance with new logic
+// Get all employees performance with fixed query to avoid duplicates
 $performance_query = "
     SELECT 
         u.id,
         u.name,
         u.email,
         u.role,
-        COUNT(DISTINCT t.id) as total_tasks,
-        SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) as completed_tasks,
-        SUM(CASE WHEN t.status IN ('in_progress', 'assigned') AND t.end_datetime >= NOW() THEN 1 ELSE 0 END) as on_track_tasks,
-        SUM(CASE WHEN t.status = 'closed' AND t.updated_at <= t.end_datetime THEN 1 ELSE 0 END) as completed_on_time,
-        SUM(CASE WHEN t.status = 'closed' AND t.updated_at > t.end_datetime THEN 1 ELSE 0 END) as completed_late,
-        SUM(CASE WHEN t.status != 'closed' AND t.end_datetime < NOW() THEN 1 ELSE 0 END) as pending_overdue,
-        -- Calculate completion rate
-        CASE 
-            WHEN COUNT(DISTINCT t.id) > 0 
-            THEN (SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) * 100.0 / COUNT(DISTINCT t.id))
-            ELSE 0 
-        END as completion_rate,
-        -- Calculate on-time completion rate
-        CASE 
-            WHEN SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) > 0 
-            THEN (SUM(CASE WHEN t.status = 'closed' AND t.updated_at <= t.end_datetime THEN 1 ELSE 0 END) * 100.0 / SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END))
-            ELSE 0 
-        END as on_time_completion_rate,
-        AVG(CASE WHEN t.status = 'closed' THEN TIMESTAMPDIFF(HOUR, t.created_at, t.updated_at) ELSE NULL END) as avg_completion_hours,
-        COUNT(DISTINCT b.id) as total_bugs_in_tasks,
-        COUNT(DISTINCT CASE WHEN b.created_by = u.id THEN b.id END) as bugs_reported,
-        COUNT(DISTINCT CASE WHEN b.status = 'closed' AND b.created_by = u.id THEN b.id END) as bugs_resolved,
-        -- Additional metrics for QA
-        SUM(CASE WHEN u.role = 'qa' AND t.status = 'in_review' THEN 1 ELSE 0 END) as tasks_in_review,
-        SUM(CASE WHEN u.role = 'qa' AND t.status = 'closed' THEN 1 ELSE 0 END) as tasks_reviewed_closed
+        -- Task metrics
+        COALESCE(tm.total_tasks, 0) as total_tasks,
+        COALESCE(tm.completed_tasks, 0) as completed_tasks,
+        COALESCE(tm.on_track_tasks, 0) as on_track_tasks,
+        COALESCE(tm.completed_on_time, 0) as completed_on_time,
+        COALESCE(tm.completed_late, 0) as completed_late,
+        COALESCE(tm.pending_overdue, 0) as pending_overdue,
+        COALESCE(tm.completion_rate, 0) as completion_rate,
+        COALESCE(tm.on_time_completion_rate, 0) as on_time_completion_rate,
+        COALESCE(tm.avg_completion_hours, 0) as avg_completion_hours,
+        -- Bug metrics
+        COALESCE(bm.total_bugs_in_tasks, 0) as total_bugs_in_tasks,
+        COALESCE(bm.bugs_reported, 0) as bugs_reported,
+        COALESCE(bm.bugs_resolved, 0) as bugs_resolved,
+        -- QA-specific metrics
+        COALESCE(qam.tasks_in_review, 0) as tasks_in_review,
+        COALESCE(qam.tasks_reviewed_closed, 0) as tasks_reviewed_closed
     FROM users u
-    LEFT JOIN task_assignments ta ON u.id = ta.user_id
-    LEFT JOIN tasks t ON ta.task_id = t.id AND t.created_at BETWEEN :start_date AND :end_date
-    LEFT JOIN bugs b ON t.id = b.task_id
+    -- Task metrics subquery (to avoid duplicate rows from multiple tasks)
+    LEFT JOIN (
+        SELECT 
+            ta.user_id,
+            COUNT(DISTINCT t.id) as total_tasks,
+            SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) as completed_tasks,
+            SUM(CASE WHEN t.status IN ('in_progress', 'assigned') AND t.end_datetime >= NOW() THEN 1 ELSE 0 END) as on_track_tasks,
+            SUM(CASE WHEN t.status = 'closed' AND t.updated_at <= t.end_datetime THEN 1 ELSE 0 END) as completed_on_time,
+            SUM(CASE WHEN t.status = 'closed' AND t.updated_at > t.end_datetime THEN 1 ELSE 0 END) as completed_late,
+            SUM(CASE WHEN t.status != 'closed' AND t.end_datetime < NOW() THEN 1 ELSE 0 END) as pending_overdue,
+            CASE 
+                WHEN COUNT(DISTINCT t.id) > 0 
+                THEN (SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) * 100.0 / COUNT(DISTINCT t.id))
+                ELSE 0 
+            END as completion_rate,
+            CASE 
+                WHEN SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) > 0 
+                THEN (SUM(CASE WHEN t.status = 'closed' AND t.updated_at <= t.end_datetime THEN 1 ELSE 0 END) * 100.0 / SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END))
+                ELSE 0 
+            END as on_time_completion_rate,
+            AVG(CASE WHEN t.status = 'closed' THEN TIMESTAMPDIFF(HOUR, t.created_at, t.updated_at) ELSE NULL END) as avg_completion_hours
+        FROM task_assignments ta
+        LEFT JOIN tasks t ON ta.task_id = t.id AND t.created_at BETWEEN :start_date AND :end_date
+        GROUP BY ta.user_id
+    ) tm ON u.id = tm.user_id
+    -- Bug metrics subquery (to avoid duplicate rows from multiple bugs)
+    LEFT JOIN (
+        SELECT 
+            ta.user_id,
+            COUNT(DISTINCT b.id) as total_bugs_in_tasks,
+            COUNT(DISTINCT CASE WHEN b.created_by = ta.user_id THEN b.id END) as bugs_reported,
+            COUNT(DISTINCT CASE WHEN b.status = 'closed' AND b.created_by = ta.user_id THEN b.id END) as bugs_resolved
+        FROM task_assignments ta
+        LEFT JOIN tasks t ON ta.task_id = t.id AND t.created_at BETWEEN :start_date AND :end_date
+        LEFT JOIN bugs b ON t.id = b.task_id
+        GROUP BY ta.user_id
+    ) bm ON u.id = bm.user_id
+    -- QA metrics subquery
+    LEFT JOIN (
+        SELECT 
+            ta.user_id,
+            SUM(CASE WHEN t.status = 'in_review' THEN 1 ELSE 0 END) as tasks_in_review,
+            SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) as tasks_reviewed_closed
+        FROM task_assignments ta
+        LEFT JOIN tasks t ON ta.task_id = t.id AND t.created_at BETWEEN :start_date AND :end_date
+        WHERE ta.user_id IN (SELECT id FROM users WHERE role = 'qa')
+        GROUP BY ta.user_id
+    ) qam ON u.id = qam.user_id
     WHERE u.role IN ('developer', 'qa') AND u.status = 'active'
-    GROUP BY u.id, u.name, u.email, u.role
-    HAVING COUNT(DISTINCT t.id) > 0  -- Exclude employees with 0 tasks
-    ORDER BY completion_rate DESC, total_tasks DESC
+    GROUP BY u.id, u.name, u.email, u.role, 
+             tm.total_tasks, tm.completed_tasks, tm.on_track_tasks, tm.completed_on_time,
+             tm.completed_late, tm.pending_overdue, tm.completion_rate, tm.on_time_completion_rate,
+             tm.avg_completion_hours, bm.total_bugs_in_tasks, bm.bugs_reported, bm.bugs_resolved,
+             qam.tasks_in_review, qam.tasks_reviewed_closed
+    HAVING COALESCE(tm.total_tasks, 0) > 0  -- Exclude employees with 0 tasks
+    ORDER BY COALESCE(tm.completion_rate, 0) DESC, COALESCE(tm.total_tasks, 0) DESC
 ";
 
 $stmt = $db->prepare($performance_query);
@@ -177,28 +218,42 @@ foreach ($performance_data as &$employee) {
     $employee['total_overdue'] = $total_overdue;
 }
 
-// Get summary statistics
+// Get summary statistics with fixed query
 $summary_query = "
     SELECT 
         COUNT(DISTINCT u.id) as total_employees,
         CASE 
-            WHEN COUNT(DISTINCT t.id) > 0 
-            THEN (SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) * 100.0 / COUNT(DISTINCT t.id))
+            WHEN SUM(tm.total_tasks) > 0 
+            THEN (SUM(tm.completed_tasks) * 100.0 / SUM(tm.total_tasks))
             ELSE 0 
         END as avg_completion_rate,
-        SUM(CASE 
-            WHEN t.status = 'closed' AND t.updated_at > t.end_datetime THEN 1
-            WHEN t.status != 'closed' AND t.end_datetime < NOW() THEN 1
-            ELSE 0 
-        END) as total_overdue,
-        COUNT(DISTINCT b.id) as total_bugs,
-        AVG(CASE WHEN t.status = 'closed' THEN TIMESTAMPDIFF(HOUR, t.created_at, t.updated_at) ELSE NULL END) as overall_avg_time
+        SUM(tm.completed_late + tm.pending_overdue) as total_overdue,
+        SUM(bm.total_bugs_in_tasks) as total_bugs,
+        AVG(tm.avg_completion_hours) as overall_avg_time
     FROM users u
-    LEFT JOIN task_assignments ta ON u.id = ta.user_id
-    LEFT JOIN tasks t ON ta.task_id = t.id AND t.created_at BETWEEN :start_date AND :end_date
-    LEFT JOIN bugs b ON t.id = b.task_id
+    LEFT JOIN (
+        SELECT 
+            ta.user_id,
+            COUNT(DISTINCT t.id) as total_tasks,
+            SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) as completed_tasks,
+            SUM(CASE WHEN t.status = 'closed' AND t.updated_at > t.end_datetime THEN 1 ELSE 0 END) as completed_late,
+            SUM(CASE WHEN t.status != 'closed' AND t.end_datetime < NOW() THEN 1 ELSE 0 END) as pending_overdue,
+            AVG(CASE WHEN t.status = 'closed' THEN TIMESTAMPDIFF(HOUR, t.created_at, t.updated_at) ELSE NULL END) as avg_completion_hours
+        FROM task_assignments ta
+        LEFT JOIN tasks t ON ta.task_id = t.id AND t.created_at BETWEEN :start_date AND :end_date
+        GROUP BY ta.user_id
+    ) tm ON u.id = tm.user_id
+    LEFT JOIN (
+        SELECT 
+            ta.user_id,
+            COUNT(DISTINCT b.id) as total_bugs_in_tasks
+        FROM task_assignments ta
+        LEFT JOIN tasks t ON ta.task_id = t.id AND t.created_at BETWEEN :start_date AND :end_date
+        LEFT JOIN bugs b ON t.id = b.task_id
+        GROUP BY ta.user_id
+    ) bm ON u.id = bm.user_id
     WHERE u.role IN ('developer', 'qa') AND u.status = 'active'
-    HAVING COUNT(DISTINCT t.id) > 0
+    GROUP BY u.role
 ";
 
 $summary_stmt = $db->prepare($summary_query);
@@ -282,6 +337,11 @@ $summary = $summary ?: [
             width: 3px;
             height: 30px;
             background-color: #000;
+        }
+        .employee-row:hover {
+            transform: scale(1.002);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: all 0.2s ease;
         }
     </style>
 </head>
@@ -410,6 +470,9 @@ $summary = $summary ?: [
             <div class="card-header">
                 <h5 class="mb-0">Individual Employee Performance</h5>
                 <p class="mb-0 text-muted" style="font-size: 0.9rem;">Period: <?= date('M d, Y', strtotime($start_date)) ?> - <?= date('M d, Y', strtotime($end_date)) ?></p>
+                <?php if (!empty($performance_data)): ?>
+                    <p class="mb-0 text-muted" style="font-size: 0.8rem;">Showing <?= count($performance_data) ?> employee(s) with tasks</p>
+                <?php endif; ?>
             </div>
             <div class="card-body">
                 <?php if (empty($performance_data)): ?>
@@ -442,7 +505,7 @@ $summary = $summary ?: [
                                 // Calculate position for performance marker (0-100 scale)
                                 $marker_position = min(100, max(0, $employee['performance_score'] ?? 0));
                             ?>
-                            <tr class="<?= $employee['performance_class'] ?>">
+                            <tr class="<?= $employee['performance_class'] ?> employee-row">
                                 <td>
                                     <strong><?= htmlspecialchars($employee['name'] ?? 'Unknown') ?></strong>
                                     <br><small class="text-muted"><?= htmlspecialchars($employee['email'] ?? 'N/A') ?></small>
@@ -598,7 +661,8 @@ $summary = $summary ?: [
                     'NEEDS IMPROVEMENT': 0,
                     'BAD': 0,
                     'VERY BAD': 0,
-                    'FIRED': 0
+                    'FIRED': 0,
+                    'NO TASKS': 0
                 };
                 
                 performanceData.forEach(emp => {
@@ -626,7 +690,8 @@ $summary = $summary ?: [
                         else if (rating === 'NEEDS IMPROVEMENT') colors.push('#fd7e14');
                         else if (rating === 'BAD') colors.push('#dc3545');
                         else if (rating === 'VERY BAD') colors.push('#721c24');
-                        else colors.push('#2d3436');
+                        else if (rating === 'FIRED') colors.push('#2d3436');
+                        else colors.push('#adb5bd');
                     }
                 });
                 
@@ -660,7 +725,7 @@ $summary = $summary ?: [
                                                 const value = context.raw || 0;
                                                 const total = context.dataset.data.reduce((a, b) => a + b, 0);
                                                 const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
-                                                return `${label}: ${value} (${percentage}%)`;
+                                                return `${label}: ${value} employee(s) (${percentage}%)`;
                                             }
                                         }
                                     }
@@ -692,12 +757,26 @@ $summary = $summary ?: [
             if (performanceData && performanceData.length > 0) {
                 const employeeNames = [];
                 const overdueData = [];
+                const colors = [];
                 
-                performanceData.forEach(emp => {
+                // Sort by overdue tasks (descending) and limit to top 10
+                const sortedData = [...performanceData].sort((a, b) => {
+                    const overdueA = (parseInt(a.completed_late) || 0) + (parseInt(a.pending_overdue) || 0);
+                    const overdueB = (parseInt(b.completed_late) || 0) + (parseInt(b.pending_overdue) || 0);
+                    return overdueB - overdueA;
+                }).slice(0, 10); // Top 10 only
+                
+                sortedData.forEach(emp => {
                     const overdue = (parseInt(emp.completed_late) || 0) + (parseInt(emp.pending_overdue) || 0);
                     if (overdue > 0) {
-                        employeeNames.push(emp.name.substring(0, 15));
+                        employeeNames.push(emp.name.substring(0, 15) + (emp.name.length > 15 ? '...' : ''));
                         overdueData.push(overdue);
+                        
+                        // Color based on severity
+                        if (overdue >= 5) colors.push('#721c24');
+                        else if (overdue >= 3) colors.push('#dc3545');
+                        else if (overdue >= 1) colors.push('#fd7e14');
+                        else colors.push('#ffc107');
                     }
                 });
                 
@@ -710,8 +789,8 @@ $summary = $summary ?: [
                                 datasets: [{
                                     label: 'Overdue Tasks',
                                     data: overdueData,
-                                    backgroundColor: '#dc3545',
-                                    borderColor: '#c82333',
+                                    backgroundColor: colors,
+                                    borderColor: colors.map(color => color.replace('0.8', '1')),
                                     borderWidth: 1
                                 }]
                             },
@@ -723,7 +802,15 @@ $summary = $summary ?: [
                                     tooltip: {
                                         callbacks: {
                                             label: function(context) {
-                                                return `Overdue Tasks: ${context.raw}`;
+                                                const empName = sortedData[context.dataIndex]?.name || 'Unknown';
+                                                const completedLate = sortedData[context.dataIndex]?.completed_late || 0;
+                                                const pendingOverdue = sortedData[context.dataIndex]?.pending_overdue || 0;
+                                                return [
+                                                    `Employee: ${empName}`,
+                                                    `Total Overdue: ${context.raw}`,
+                                                    `• Completed Late: ${completedLate}`,
+                                                    `• Pending Overdue: ${pendingOverdue}`
+                                                ];
                                             }
                                         }
                                     }
@@ -740,11 +827,7 @@ $summary = $summary ?: [
                                     x: {
                                         ticks: {
                                             maxRotation: 45,
-                                            minRotation: 45,
-                                            callback: function(value) {
-                                                const label = this.getLabelForValue(value);
-                                                return label.length > 10 ? label.substring(0, 10) + '...' : label;
-                                            }
+                                            minRotation: 45
                                         }
                                     }
                                 }
