@@ -29,7 +29,7 @@ function getProfilePicture($userImage, $userName, $size = 32) {
 
 // Function to get default profile picture URL
 function getDefaultProfilePicture($size = 28) {
-    return "https://ui-avatars.com/api/?name=JN&background=007bff&color=fff&size=32";
+    return "https://ui-avatars.com/api/?name=JN&background=007bff&color=fff&size=".$size;
 }
 
 $database = new Database();
