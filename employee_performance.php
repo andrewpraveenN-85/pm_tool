@@ -11,7 +11,7 @@ $auth->requireRole(['manager']);
 $start_date = $_GET['start_date'] ?? date('Y-m-01');
 $end_date = $_GET['end_date'] ?? date('Y-m-t');
 
-// Get all employees performance with updated overdue calculation
+// Get all employees performance with new logic
 $performance_query = "
     SELECT 
         u.id,
@@ -20,29 +20,36 @@ $performance_query = "
         u.role,
         COUNT(DISTINCT t.id) as total_tasks,
         SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) as completed_tasks,
+        SUM(CASE WHEN t.status IN ('in_progress', 'assigned') AND t.end_datetime >= NOW() THEN 1 ELSE 0 END) as on_track_tasks,
+        SUM(CASE WHEN t.status = 'closed' AND t.updated_at <= t.end_datetime THEN 1 ELSE 0 END) as completed_on_time,
+        SUM(CASE WHEN t.status = 'closed' AND t.updated_at > t.end_datetime THEN 1 ELSE 0 END) as completed_late,
+        SUM(CASE WHEN t.status != 'closed' AND t.end_datetime < NOW() THEN 1 ELSE 0 END) as pending_overdue,
+        -- Calculate completion rate
         CASE 
             WHEN COUNT(DISTINCT t.id) > 0 
             THEN (SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) * 100.0 / COUNT(DISTINCT t.id))
             ELSE 0 
         END as completion_rate,
+        -- Calculate on-time completion rate
+        CASE 
+            WHEN SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) > 0 
+            THEN (SUM(CASE WHEN t.status = 'closed' AND t.updated_at <= t.end_datetime THEN 1 ELSE 0 END) * 100.0 / SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END))
+            ELSE 0 
+        END as on_time_completion_rate,
         AVG(CASE WHEN t.status = 'closed' THEN TIMESTAMPDIFF(HOUR, t.created_at, t.updated_at) ELSE NULL END) as avg_completion_hours,
-        MIN(CASE WHEN t.status = 'closed' THEN TIMESTAMPDIFF(HOUR, t.created_at, t.updated_at) ELSE NULL END) as fastest_completion,
-        MAX(CASE WHEN t.status = 'closed' THEN TIMESTAMPDIFF(HOUR, t.created_at, t.updated_at) ELSE NULL END) as slowest_completion,
         COUNT(DISTINCT b.id) as total_bugs_in_tasks,
         COUNT(DISTINCT CASE WHEN b.created_by = u.id THEN b.id END) as bugs_reported,
         COUNT(DISTINCT CASE WHEN b.status = 'closed' AND b.created_by = u.id THEN b.id END) as bugs_resolved,
-        -- Updated overdue calculation: only count tasks that were closed after deadline OR are not closed and past deadline
-        SUM(CASE 
-            WHEN t.status = 'closed' AND t.updated_at > t.end_datetime THEN 1
-            WHEN t.status != 'closed' AND t.end_datetime < NOW() THEN 1
-            ELSE 0 
-        END) as overdue_tasks
+        -- Additional metrics for QA
+        SUM(CASE WHEN u.role = 'qa' AND t.status = 'in_review' THEN 1 ELSE 0 END) as tasks_in_review,
+        SUM(CASE WHEN u.role = 'qa' AND t.status = 'closed' THEN 1 ELSE 0 END) as tasks_reviewed_closed
     FROM users u
     LEFT JOIN task_assignments ta ON u.id = ta.user_id
     LEFT JOIN tasks t ON ta.task_id = t.id AND t.created_at BETWEEN :start_date AND :end_date
     LEFT JOIN bugs b ON t.id = b.task_id
     WHERE u.role IN ('developer', 'qa') AND u.status = 'active'
     GROUP BY u.id, u.name, u.email, u.role
+    HAVING COUNT(DISTINCT t.id) > 0  -- Exclude employees with 0 tasks
     ORDER BY completion_rate DESC, total_tasks DESC
 ";
 
@@ -52,7 +59,125 @@ $stmt->bindParam(':end_date', $end_date);
 $stmt->execute();
 $performance_data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get summary statistics with updated overdue calculation
+// Calculate performance rating based on new logic
+foreach ($performance_data as &$employee) {
+    $total_overdue = intval($employee['completed_late'] ?? 0) + intval($employee['pending_overdue'] ?? 0);
+    $on_time_rate = floatval($employee['on_time_completion_rate'] ?? 0);
+    $bugs_reported = intval($employee['bugs_reported'] ?? 0);
+    
+    // Performance calculation logic
+    $performance_score = 0;
+    $performance_rating = '';
+    $performance_class = '';
+    $performance_color = '';
+    
+    if ($employee['role'] == 'developer') {
+        // Developer performance logic
+        if ($total_overdue >= 5) {
+            $performance_rating = 'FIRED';
+            $performance_score = 0;
+            $performance_class = 'bg-dark text-white';
+            $performance_color = 'dark';
+        } elseif ($total_overdue >= 3) {
+            $performance_rating = 'VERY BAD';
+            $performance_score = 20;
+            $performance_class = 'performance-very-bad';
+            $performance_color = 'danger';
+        } elseif ($total_overdue >= 1) {
+            $performance_rating = 'BAD';
+            $performance_score = 40;
+            $performance_class = 'performance-bad';
+            $performance_color = 'warning';
+        } elseif ($on_time_rate >= 90 && $bugs_reported == 0) {
+            // Check if completed more tasks than allocated (very good)
+            $completion_rate = floatval($employee['completion_rate'] ?? 0);
+            if ($completion_rate > 100) { // Completed more than allocated
+                $performance_rating = 'EXCELLENT';
+                $performance_score = 100;
+                $performance_class = 'performance-excellent';
+                $performance_color = 'success';
+            } else {
+                $performance_rating = 'VERY GOOD';
+                $performance_score = 90;
+                $performance_class = 'performance-very-good';
+                $performance_color = 'info';
+            }
+        } elseif ($on_time_rate >= 80) {
+            $performance_rating = 'GOOD';
+            $performance_score = 80;
+            $performance_class = 'performance-good';
+            $performance_color = 'primary';
+        } elseif ($on_time_rate >= 60) {
+            $performance_rating = 'AVERAGE';
+            $performance_score = 60;
+            $performance_class = 'performance-average';
+            $performance_color = 'secondary';
+        } else {
+            $performance_rating = 'NEEDS IMPROVEMENT';
+            $performance_score = 50;
+            $performance_class = 'performance-needs-improvement';
+            $performance_color = 'warning';
+        }
+        
+        // Deduct points for bugs (2% per bug)
+        $bugs_penalty = min($bugs_reported * 2, 30);
+        $performance_score = max(0, $performance_score - $bugs_penalty);
+        
+    } elseif ($employee['role'] == 'qa') {
+        // QA performance logic
+        $tasks_reviewed = intval($employee['tasks_reviewed_closed'] ?? 0);
+        $tasks_in_review = intval($employee['tasks_in_review'] ?? 0);
+        $total_qa_tasks = $tasks_reviewed + $tasks_in_review;
+        
+        if ($total_qa_tasks > 0) {
+            $qa_efficiency = ($tasks_reviewed / $total_qa_tasks) * 100;
+            
+            if ($qa_efficiency >= 90 && $bugs_reported > 0) {
+                $performance_rating = 'EXCELLENT';
+                $performance_score = 95;
+                $performance_class = 'performance-excellent';
+                $performance_color = 'success';
+            } elseif ($qa_efficiency >= 80) {
+                $performance_rating = 'VERY GOOD';
+                $performance_score = 85;
+                $performance_class = 'performance-very-good';
+                $performance_color = 'info';
+            } elseif ($qa_efficiency >= 70) {
+                $performance_rating = 'GOOD';
+                $performance_score = 75;
+                $performance_class = 'performance-good';
+                $performance_color = 'primary';
+            } elseif ($qa_efficiency >= 50) {
+                $performance_rating = 'AVERAGE';
+                $performance_score = 60;
+                $performance_class = 'performance-average';
+                $performance_color = 'secondary';
+            } else {
+                $performance_rating = 'NEEDS IMPROVEMENT';
+                $performance_score = 40;
+                $performance_class = 'performance-needs-improvement';
+                $performance_color = 'warning';
+            }
+            
+            // Bonus for finding bugs (5% per bug found, max 25%)
+            $bugs_bonus = min($bugs_reported * 5, 25);
+            $performance_score = min(100, $performance_score + $bugs_bonus);
+        } else {
+            $performance_rating = 'NO TASKS';
+            $performance_score = 0;
+            $performance_class = 'bg-light text-dark';
+            $performance_color = 'light';
+        }
+    }
+    
+    $employee['performance_score'] = $performance_score;
+    $employee['performance_rating'] = $performance_rating;
+    $employee['performance_class'] = $performance_class;
+    $employee['performance_color'] = $performance_color;
+    $employee['total_overdue'] = $total_overdue;
+}
+
+// Get summary statistics
 $summary_query = "
     SELECT 
         COUNT(DISTINCT u.id) as total_employees,
@@ -61,7 +186,6 @@ $summary_query = "
             THEN (SUM(CASE WHEN t.status = 'closed' THEN 1 ELSE 0 END) * 100.0 / COUNT(DISTINCT t.id))
             ELSE 0 
         END as avg_completion_rate,
-        -- Updated overdue calculation
         SUM(CASE 
             WHEN t.status = 'closed' AND t.updated_at > t.end_datetime THEN 1
             WHEN t.status != 'closed' AND t.end_datetime < NOW() THEN 1
@@ -74,6 +198,7 @@ $summary_query = "
     LEFT JOIN tasks t ON ta.task_id = t.id AND t.created_at BETWEEN :start_date AND :end_date
     LEFT JOIN bugs b ON t.id = b.task_id
     WHERE u.role IN ('developer', 'qa') AND u.status = 'active'
+    HAVING COUNT(DISTINCT t.id) > 0
 ";
 
 $summary_stmt = $db->prepare($summary_query);
@@ -111,9 +236,15 @@ $summary = $summary ?: [
         .progress-thin {
             height: 8px;
         }
-        .performance-excellent { background-color: #d4edda !important; }
-        .performance-good { background-color: #fff3cd !important; }
-        .performance-average { background-color: #f8d7da !important; }
+        .performance-excellent { background-color: #d4edda !important; border-left: 4px solid #28a745; }
+        .performance-very-good { background-color: #d1ecf1 !important; border-left: 4px solid #17a2b8; }
+        .performance-good { background-color: #fff3cd !important; border-left: 4px solid #ffc107; }
+        .performance-average { background-color: #f8d7da !important; border-left: 4px solid #dc3545; }
+        .performance-bad { background-color: #f5c6cb !important; border-left: 4px solid #dc3545; }
+        .performance-very-bad { background-color: #721c24 !important; color: white !important; border-left: 4px solid #dc3545; }
+        .performance-needs-improvement { background-color: #ffeaa7 !important; border-left: 4px solid #fdcb6e; }
+        .performance-fired { background-color: #2d3436 !important; color: white !important; border-left: 4px solid #000; }
+        
         .no-data-message {
             min-height: 250px;
             display: flex;
@@ -127,6 +258,30 @@ $summary = $summary ?: [
             .card {
                 border: 1px solid #ddd !important;
             }
+        }
+        .performance-bar {
+            width: 100px;
+            height: 20px;
+            background: linear-gradient(90deg, 
+                #dc3545 0%, 
+                #dc3545 20%, 
+                #ffc107 20%, 
+                #ffc107 40%, 
+                #17a2b8 40%, 
+                #17a2b8 60%, 
+                #28a745 60%, 
+                #28a745 80%, 
+                #198754 80%, 
+                #198754 100%
+            );
+            position: relative;
+        }
+        .performance-marker {
+            position: absolute;
+            top: -5px;
+            width: 3px;
+            height: 30px;
+            background-color: #000;
         }
     </style>
 </head>
@@ -142,7 +297,7 @@ $summary = $summary ?: [
                         <i class="fas fa-file-pdf"></i> Export PDF
                     </button>
                 </div>
-                <p class="text-muted">Overall performance metrics for all employees</p>
+                <p class="text-muted">Overall performance metrics for all employees (Only employees with tasks are shown)</p>
             </div>
         </div>
 
@@ -173,13 +328,51 @@ $summary = $summary ?: [
             </div>
         </div>
 
+        <!-- Performance Legend -->
+        <div class="row mb-4 no-print">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">Performance Rating Legend</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>Developers:</h6>
+                                <div class="d-flex flex-wrap gap-2 mb-3">
+                                    <span class="badge bg-success">EXCELLENT: >100% completion, 0 bugs</span>
+                                    <span class="badge bg-info">VERY GOOD: ≥90% on-time, 0 bugs</span>
+                                    <span class="badge bg-primary">GOOD: ≥80% on-time</span>
+                                    <span class="badge bg-secondary">AVERAGE: ≥60% on-time</span>
+                                    <span class="badge bg-warning">BAD: 1-2 overdue tasks</span>
+                                    <span class="badge bg-danger">VERY BAD: 3-4 overdue tasks</span>
+                                    <span class="badge bg-dark">FIRED: 5+ overdue tasks</span>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>QA Engineers:</h6>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <span class="badge bg-success">EXCELLENT: ≥90% efficiency, bugs found</span>
+                                    <span class="badge bg-info">VERY GOOD: ≥80% efficiency</span>
+                                    <span class="badge bg-primary">GOOD: ≥70% efficiency</span>
+                                    <span class="badge bg-secondary">AVERAGE: ≥50% efficiency</span>
+                                    <span class="badge bg-warning">NEEDS IMPROVEMENT: <50% efficiency</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Summary Statistics -->
         <div class="row mb-4">
             <div class="col-md-3">
                 <div class="card stat-card text-center bg-primary text-white">
                     <div class="card-body">
                         <h3><?= htmlspecialchars($summary['total_employees']) ?></h3>
-                        <p class="mb-0">Total Employees</p>
+                        <p class="mb-0">Active Employees</p>
+                        <small>With assigned tasks</small>
                     </div>
                 </div>
             </div>
@@ -188,6 +381,7 @@ $summary = $summary ?: [
                     <div class="card-body">
                         <h3><?= number_format($summary['avg_completion_rate'], 1) ?>%</h3>
                         <p class="mb-0">Avg. Completion Rate</p>
+                        <small>All employees</small>
                     </div>
                 </div>
             </div>
@@ -196,6 +390,7 @@ $summary = $summary ?: [
                     <div class="card-body">
                         <h3><?= htmlspecialchars($summary['total_overdue']) ?></h3>
                         <p class="mb-0">Total Overdue Tasks</p>
+                        <small>Requiring attention</small>
                     </div>
                 </div>
             </div>
@@ -204,6 +399,7 @@ $summary = $summary ?: [
                     <div class="card-body">
                         <h3><?= htmlspecialchars($summary['total_bugs']) ?></h3>
                         <p class="mb-0">Total Bugs</p>
+                        <small>Reported in period</small>
                     </div>
                 </div>
             </div>
@@ -218,7 +414,7 @@ $summary = $summary ?: [
             <div class="card-body">
                 <?php if (empty($performance_data)): ?>
                     <div class="alert alert-info">
-                        <i class="fas fa-info-circle"></i> No employee performance data available for the selected period.
+                        <i class="fas fa-info-circle"></i> No employee performance data available for the selected period. Employees with 0 tasks are not shown.
                     </div>
                 <?php else: ?>
                 <div class="table-responsive">
@@ -228,81 +424,103 @@ $summary = $summary ?: [
                                 <th>Employee</th>
                                 <th>Role</th>
                                 <th>Tasks</th>
-                                <th>Completion Rate</th>
-                                <th>Avg. Time</th>
+                                <th>Performance Score</th>
+                                <th>On-Time Rate</th>
                                 <th>Overdue</th>
                                 <th>Bugs</th>
-                                <th>Performance</th>
+                                <th>Performance Rating</th>
                                 <th class="no-print">Details</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($performance_data as $employee): 
-                                $completion_rate = floatval($employee['completion_rate'] ?? 0);
-                                $performance_class = '';
-                                $performance_rating = '';
-                                $performance_color = '';
+                                $total_overdue = intval($employee['completed_late'] ?? 0) + intval($employee['pending_overdue'] ?? 0);
+                                $on_time_rate = floatval($employee['on_time_completion_rate'] ?? 0);
+                                $bugs_reported = intval($employee['bugs_reported'] ?? 0);
+                                $bugs_resolved = intval($employee['bugs_resolved'] ?? 0);
                                 
-                                if ($completion_rate >= 80) {
-                                    $performance_class = 'performance-excellent';
-                                    $performance_rating = 'Excellent';
-                                    $performance_color = 'success';
-                                } elseif ($completion_rate >= 60) {
-                                    $performance_class = 'performance-good';
-                                    $performance_rating = 'Good';
-                                    $performance_color = 'warning';
-                                } else {
-                                    $performance_class = 'performance-average';
-                                    $performance_rating = 'Needs Improvement';
-                                    $performance_color = 'danger';
-                                }
-                                
-                                $avg_completion_hours = floatval($employee['avg_completion_hours'] ?? 0);
-                                $completion_days = $avg_completion_hours > 0 ? number_format($avg_completion_hours / 24, 1) : 0;
+                                // Calculate position for performance marker (0-100 scale)
+                                $marker_position = min(100, max(0, $employee['performance_score'] ?? 0));
                             ?>
-                            <tr class="<?= $performance_class ?>">
+                            <tr class="<?= $employee['performance_class'] ?>">
                                 <td>
                                     <strong><?= htmlspecialchars($employee['name'] ?? 'Unknown') ?></strong>
                                     <br><small class="text-muted"><?= htmlspecialchars($employee['email'] ?? 'N/A') ?></small>
                                 </td>
                                 <td>
                                     <span class="badge bg-<?= ($employee['role'] ?? '') == 'developer' ? 'info' : 'warning' ?>">
-                                        <?= ucfirst($employee['role'] ?? 'unknown') ?>
+                                        <?= strtoupper($employee['role'] ?? 'unknown') ?>
                                     </span>
                                 </td>
                                 <td>
                                     <strong><?= htmlspecialchars($employee['total_tasks'] ?? 0) ?></strong>
-                                    <br><small class="text-muted"><?= htmlspecialchars($employee['completed_tasks'] ?? 0) ?> completed</small>
+                                    <br>
+                                    <small class="text-muted">
+                                        <?= htmlspecialchars($employee['completed_tasks'] ?? 0) ?> completed
+                                        <?php if ($employee['role'] == 'qa'): ?>
+                                            <br><?= htmlspecialchars($employee['tasks_in_review'] ?? 0) ?> in review
+                                        <?php endif; ?>
+                                    </small>
                                 </td>
                                 <td>
                                     <div class="d-flex align-items-center">
-                                        <span class="me-2 fw-bold"><?= number_format($completion_rate, 1) ?>%</span>
-                                        <div class="progress progress-thin flex-grow-1" style="width: 100px;">
-                                            <div class="progress-bar bg-<?= $performance_color ?>" 
-                                                 style="width: <?= min(100, $completion_rate) ?>%"></div>
+                                        <span class="me-2 fw-bold"><?= number_format($employee['performance_score'], 0) ?>%</span>
+                                        <div class="performance-bar">
+                                            <div class="performance-marker" style="left: <?= $marker_position ?>%;"></div>
                                         </div>
                                     </div>
                                 </td>
                                 <td>
-                                    <?php if ($avg_completion_hours > 0): ?>
-                                        <?= $completion_days ?> days
-                                    <?php else: ?>
-                                        <span class="text-muted">N/A</span>
+                                    <?php if ($employee['role'] == 'developer'): ?>
+                                        <div class="d-flex align-items-center">
+                                            <span class="me-2 fw-bold"><?= number_format($on_time_rate, 1) ?>%</span>
+                                            <div class="progress progress-thin flex-grow-1" style="width: 100px;">
+                                                <div class="progress-bar bg-<?= 
+                                                    $on_time_rate >= 90 ? 'success' : 
+                                                    ($on_time_rate >= 80 ? 'info' : 
+                                                    ($on_time_rate >= 60 ? 'warning' : 'danger')) 
+                                                ?>" style="width: <?= min(100, $on_time_rate) ?>%"></div>
+                                            </div>
+                                        </div>
+                                    <?php elseif ($employee['role'] == 'qa'): ?>
+                                        <?php 
+                                        $tasks_reviewed = intval($employee['tasks_reviewed_closed'] ?? 0);
+                                        $tasks_in_review = intval($employee['tasks_in_review'] ?? 0);
+                                        $total_qa_tasks = $tasks_reviewed + $tasks_in_review;
+                                        $qa_efficiency = $total_qa_tasks > 0 ? ($tasks_reviewed / $total_qa_tasks) * 100 : 0;
+                                        ?>
+                                        <div class="d-flex align-items-center">
+                                            <span class="me-2 fw-bold"><?= number_format($qa_efficiency, 1) ?>%</span>
+                                            <div class="progress progress-thin flex-grow-1" style="width: 100px;">
+                                                <div class="progress-bar bg-<?= 
+                                                    $qa_efficiency >= 90 ? 'success' : 
+                                                    ($qa_efficiency >= 80 ? 'info' : 
+                                                    ($qa_efficiency >= 70 ? 'primary' : 
+                                                    ($qa_efficiency >= 50 ? 'secondary' : 'warning'))) 
+                                                ?>" style="width: <?= min(100, $qa_efficiency) ?>%"></div>
+                                            </div>
+                                        </div>
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <?php if (($employee['overdue_tasks'] ?? 0) > 0): ?>
-                                        <span class="badge bg-danger"><?= htmlspecialchars($employee['overdue_tasks']) ?></span>
+                                    <?php if ($total_overdue > 0): ?>
+                                        <span class="badge bg-danger">
+                                            <?= $total_overdue ?> overdue
+                                            <br>
+                                            <small>
+                                                (<?= htmlspecialchars($employee['completed_late'] ?? 0) ?> late,
+                                                <?= htmlspecialchars($employee['pending_overdue'] ?? 0) ?> pending)
+                                            </small>
+                                        </span>
                                     <?php else: ?>
                                         <span class="badge bg-success">0</span>
                                     <?php endif; ?>
                                 </td>
                                 <td>
                                     <?php 
-                                    $bugs_reported = intval($employee['bugs_reported'] ?? 0);
-                                    $bugs_resolved = intval($employee['bugs_resolved'] ?? 0);
                                     $bugs_badge_color = $bugs_reported == 0 ? 'secondary' : 
-                                                       ($bugs_reported <= 5 ? 'info' : 'warning');
+                                                       ($bugs_reported <= 3 ? 'info' : 
+                                                       ($bugs_reported <= 7 ? 'warning' : 'danger'));
                                     ?>
                                     <span class="badge bg-<?= $bugs_badge_color ?>">
                                         <?= $bugs_reported ?> reported
@@ -312,8 +530,8 @@ $summary = $summary ?: [
                                     </span>
                                 </td>
                                 <td>
-                                    <span class="badge bg-<?= $performance_color ?>">
-                                        <?= $performance_rating ?>
+                                    <span class="badge bg-<?= $employee['performance_color'] ?>">
+                                        <?= $employee['performance_rating'] ?>
                                     </span>
                                 </td>
                                 <td class="no-print">
@@ -349,12 +567,12 @@ $summary = $summary ?: [
             <div class="col-md-6">
                 <div class="card">
                     <div class="card-header">
-                        <h5 class="mb-0">Completion Time Analysis</h5>
+                        <h5 class="mb-0">Overdue Tasks Analysis</h5>
                     </div>
                     <div class="card-body">
-                        <canvas id="timeChart" height="250"></canvas>
-                        <div id="timeChartNoData" class="no-data-message" style="display: none;">
-                            <p class="text-muted">No completion time data available.</p>
+                        <canvas id="overdueChart" height="250"></canvas>
+                        <div id="overdueChartNoData" class="no-data-message" style="display: none;">
+                            <p class="text-muted">No overdue task data available.</p>
                         </div>
                     </div>
                 </div>
@@ -368,110 +586,59 @@ $summary = $summary ?: [
         const performanceNoData = document.getElementById('performanceChartNoData');
         
         if (performanceCtx) {
-            // Get performance data from PHP
-            const performanceData = <?= json_encode($performance_data) ?>;
-            
-            // Calculate performance distribution with null checks
-            const excellent = performanceData && performanceData.length > 0 
-                ? performanceData.filter(emp => (parseFloat(emp.completion_rate) || 0) >= 80).length 
-                : 0;
-            const good = performanceData && performanceData.length > 0 
-                ? performanceData.filter(emp => {
-                    const rate = parseFloat(emp.completion_rate) || 0;
-                    return rate >= 60 && rate < 80;
-                }).length 
-                : 0;
-            const needsImprovement = performanceData && performanceData.length > 0 
-                ? performanceData.filter(emp => (parseFloat(emp.completion_rate) || 0) < 60).length 
-                : 0;
-            
-            // Only create chart if we have data
-            if (excellent > 0 || good > 0 || needsImprovement > 0) {
-                try {
-                    const performanceChart = new Chart(performanceCtx.getContext('2d'), {
-                        type: 'doughnut',
-                        data: {
-                            labels: ['Excellent (80%+)', 'Good (60-79%)', 'Needs Improvement (<60%)'],
-                            datasets: [{
-                                data: [excellent, good, needsImprovement],
-                                backgroundColor: ['#28a745', '#ffc107', '#dc3545'],
-                                borderWidth: 1
-                            }]
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            plugins: {
-                                legend: {
-                                    position: 'bottom',
-                                    labels: {
-                                        padding: 20,
-                                        usePointStyle: true
-                                    }
-                                },
-                                tooltip: {
-                                    callbacks: {
-                                        label: function(context) {
-                                            const label = context.label || '';
-                                            const value = context.raw || 0;
-                                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                            const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
-                                            return `${label}: ${value} (${percentage}%)`;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    });
-                } catch (error) {
-                    console.error('Error creating performance chart:', error);
-                    performanceCtx.style.display = 'none';
-                    if (performanceNoData) {
-                        performanceNoData.style.display = 'flex';
-                    }
-                }
-            } else {
-                performanceCtx.style.display = 'none';
-                if (performanceNoData) {
-                    performanceNoData.style.display = 'flex';
-                }
-            }
-        }
-
-        // Time Analysis Chart
-        const timeCtx = document.getElementById('timeChart');
-        const timeNoData = document.getElementById('timeChartNoData');
-        
-        if (timeCtx) {
             const performanceData = <?= json_encode($performance_data) ?>;
             
             if (performanceData && performanceData.length > 0) {
-                // Extract employee names and completion times
-                const employeeNames = [];
-                const completionTimes = [];
+                // Count performance ratings
+                const ratings = {
+                    'EXCELLENT': 0,
+                    'VERY GOOD': 0,
+                    'GOOD': 0,
+                    'AVERAGE': 0,
+                    'NEEDS IMPROVEMENT': 0,
+                    'BAD': 0,
+                    'VERY BAD': 0,
+                    'FIRED': 0
+                };
                 
                 performanceData.forEach(emp => {
-                    if (emp.name && emp.avg_completion_hours) {
-                        const hours = parseFloat(emp.avg_completion_hours);
-                        if (hours > 0) {
-                            employeeNames.push(emp.name.substring(0, 20)); // Limit name length
-                            completionTimes.push(parseFloat((hours / 24).toFixed(1)));
-                        }
+                    const rating = emp.performance_rating || 'NO RATING';
+                    if (ratings[rating] !== undefined) {
+                        ratings[rating]++;
                     }
                 });
                 
-                // Only create chart if we have valid data
-                if (completionTimes.length > 0) {
+                // Filter out zero counts
+                const labels = [];
+                const data = [];
+                const colors = [];
+                
+                Object.entries(ratings).forEach(([rating, count]) => {
+                    if (count > 0) {
+                        labels.push(rating);
+                        data.push(count);
+                        
+                        // Assign colors based on rating
+                        if (rating === 'EXCELLENT') colors.push('#28a745');
+                        else if (rating === 'VERY GOOD') colors.push('#17a2b8');
+                        else if (rating === 'GOOD') colors.push('#ffc107');
+                        else if (rating === 'AVERAGE') colors.push('#6c757d');
+                        else if (rating === 'NEEDS IMPROVEMENT') colors.push('#fd7e14');
+                        else if (rating === 'BAD') colors.push('#dc3545');
+                        else if (rating === 'VERY BAD') colors.push('#721c24');
+                        else colors.push('#2d3436');
+                    }
+                });
+                
+                if (data.length > 0) {
                     try {
-                        const timeChart = new Chart(timeCtx.getContext('2d'), {
-                            type: 'bar',
+                        new Chart(performanceCtx.getContext('2d'), {
+                            type: 'doughnut',
                             data: {
-                                labels: employeeNames,
+                                labels: labels,
                                 datasets: [{
-                                    label: 'Average Completion Time (Days)',
-                                    data: completionTimes,
-                                    backgroundColor: '#36a2eb',
-                                    borderColor: '#2a8bd9',
+                                    data: data,
+                                    backgroundColor: colors,
                                     borderWidth: 1
                                 }]
                             },
@@ -480,12 +647,83 @@ $summary = $summary ?: [
                                 maintainAspectRatio: false,
                                 plugins: {
                                     legend: {
-                                        display: false
+                                        position: 'bottom',
+                                        labels: {
+                                            padding: 20,
+                                            usePointStyle: true
+                                        }
                                     },
                                     tooltip: {
                                         callbacks: {
                                             label: function(context) {
-                                                return `${context.dataset.label}: ${context.raw} days`;
+                                                const label = context.label || '';
+                                                const value = context.raw || 0;
+                                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                                const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
+                                                return `${label}: ${value} (${percentage}%)`;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    } catch (error) {
+                        console.error('Error creating performance chart:', error);
+                        performanceCtx.style.display = 'none';
+                        if (performanceNoData) performanceNoData.style.display = 'flex';
+                    }
+                } else {
+                    performanceCtx.style.display = 'none';
+                    if (performanceNoData) performanceNoData.style.display = 'flex';
+                }
+            } else {
+                performanceCtx.style.display = 'none';
+                if (performanceNoData) performanceNoData.style.display = 'flex';
+            }
+        }
+
+        // Overdue Tasks Chart
+        const overdueCtx = document.getElementById('overdueChart');
+        const overdueNoData = document.getElementById('overdueChartNoData');
+        
+        if (overdueCtx) {
+            const performanceData = <?= json_encode($performance_data) ?>;
+            
+            if (performanceData && performanceData.length > 0) {
+                const employeeNames = [];
+                const overdueData = [];
+                
+                performanceData.forEach(emp => {
+                    const overdue = (parseInt(emp.completed_late) || 0) + (parseInt(emp.pending_overdue) || 0);
+                    if (overdue > 0) {
+                        employeeNames.push(emp.name.substring(0, 15));
+                        overdueData.push(overdue);
+                    }
+                });
+                
+                if (overdueData.length > 0) {
+                    try {
+                        new Chart(overdueCtx.getContext('2d'), {
+                            type: 'bar',
+                            data: {
+                                labels: employeeNames,
+                                datasets: [{
+                                    label: 'Overdue Tasks',
+                                    data: overdueData,
+                                    backgroundColor: '#dc3545',
+                                    borderColor: '#c82333',
+                                    borderWidth: 1
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                plugins: {
+                                    legend: { display: false },
+                                    tooltip: {
+                                        callbacks: {
+                                            label: function(context) {
+                                                return `Overdue Tasks: ${context.raw}`;
                                             }
                                         }
                                     }
@@ -495,20 +733,17 @@ $summary = $summary ?: [
                                         beginAtZero: true,
                                         title: {
                                             display: true,
-                                            text: 'Days'
+                                            text: 'Number of Overdue Tasks'
                                         },
-                                        ticks: {
-                                            precision: 1
-                                        }
+                                        ticks: { stepSize: 1 }
                                     },
                                     x: {
                                         ticks: {
                                             maxRotation: 45,
                                             minRotation: 45,
                                             callback: function(value) {
-                                                // Truncate long names for display
                                                 const label = this.getLabelForValue(value);
-                                                return label.length > 15 ? label.substring(0, 15) + '...' : label;
+                                                return label.length > 10 ? label.substring(0, 10) + '...' : label;
                                             }
                                         }
                                     }
@@ -516,23 +751,17 @@ $summary = $summary ?: [
                             }
                         });
                     } catch (error) {
-                        console.error('Error creating time chart:', error);
-                        timeCtx.style.display = 'none';
-                        if (timeNoData) {
-                            timeNoData.style.display = 'flex';
-                        }
+                        console.error('Error creating overdue chart:', error);
+                        overdueCtx.style.display = 'none';
+                        if (overdueNoData) overdueNoData.style.display = 'flex';
                     }
                 } else {
-                    timeCtx.style.display = 'none';
-                    if (timeNoData) {
-                        timeNoData.style.display = 'flex';
-                    }
+                    overdueCtx.style.display = 'none';
+                    if (overdueNoData) overdueNoData.style.display = 'flex';
                 }
             } else {
-                timeCtx.style.display = 'none';
-                if (timeNoData) {
-                    timeNoData.style.display = 'flex';
-                }
+                overdueCtx.style.display = 'none';
+                if (overdueNoData) overdueNoData.style.display = 'flex';
             }
         }
     </script>

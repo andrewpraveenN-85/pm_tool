@@ -2,19 +2,22 @@
 include 'config/database.php';
 include 'includes/auth.php';
 include 'includes/notifications.php';
+include 'includes/activity_logger.php';
 
 $database = new Database();
 $db = $database->getConnection();
 $auth = new Auth($db);
 $auth->requireAuth();
 
-// Initialize notification service
+// Initialize services
 $notification = new Notification($db);
+$activityLogger = new ActivityLogger($db);
+$current_user_id = $_SESSION['user_id'] ?? null;
 
 // Handle form submissions
 if ($_POST) {
     if (isset($_POST['create_task'])) {
-        // Server-side validation
+        // Form validation
         $errors = [];
         
         $name = trim($_POST['name'] ?? '');
@@ -52,28 +55,25 @@ if ($_POST) {
         
         // Validate file uploads
         if (!empty($_FILES['attachments']['name'][0])) {
-            $max_file_size = 10 * 1024 * 1024; // 10MB
+            $max_file_size = 10 * 1024 * 1024;
             $allowed_types = ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'txt', 'zip'];
             
             foreach ($_FILES['attachments']['tmp_name'] as $key => $tmp_name) {
                 if ($_FILES['attachments']['error'][$key] === UPLOAD_ERR_OK) {
-                    // Check file size
                     if ($_FILES['attachments']['size'][$key] > $max_file_size) {
                         $errors[] = "File '" . $_FILES['attachments']['name'][$key] . "' exceeds 10MB limit.";
                         continue;
                     }
                     
-                    // Check file type
                     $original_name = $_FILES['attachments']['name'][$key];
                     $file_extension = strtolower(pathinfo($original_name, PATHINFO_EXTENSION));
                     if (!in_array($file_extension, $allowed_types)) {
-                        $errors[] = "File '" . $original_name . "' has an invalid file type. Allowed types: " . implode(', ', $allowed_types);
+                        $errors[] = "File '" . $original_name . "' has an invalid file type.";
                     }
                 }
             }
         }
         
-        // If no validation errors, proceed with task creation
         if (empty($errors)) {
             try {
                 $db->beginTransaction();
@@ -103,7 +103,7 @@ if ($_POST) {
                     $assign_stmt->execute();
                 }
                 
-                // Handle file uploads for the task
+                // Handle file uploads
                 if (!empty($_FILES['attachments']['name'][0])) {
                     $upload_dir = 'uploads/tasks/' . $task_id . '/';
                     if (!is_dir($upload_dir)) {
@@ -136,25 +136,88 @@ if ($_POST) {
                 
                 $db->commit();
                 
-                // Send assignment notifications and emails
+                // Log task creation
+                $activityLogger->logActivity(
+                    $current_user_id,
+                    'create',
+                    'task',
+                    $task_id,
+                    json_encode([
+                        'task_name' => $name,
+                        'project_id' => $project_id,
+                        'priority' => $priority,
+                        'assignees' => $assignees,
+                        'attachments_count' => count($_FILES['attachments']['name'] ?? []),
+                        'created_by' => $current_user_id,
+                        'ip_address' => $_SERVER['REMOTE_ADDR']
+                    ])
+                );
+                
+                // Send notifications
                 if (!empty($assignees)) {
                     $notification->createTaskAssignmentNotification($task_id, $assignees);
+                    
+                    // Log notifications
+                    $activityLogger->logActivity(
+                        $current_user_id,
+                        'task_assignment_notifications',
+                        'task',
+                        $task_id,
+                        json_encode([
+                            'task_name' => $name,
+                            'assignees_count' => count($assignees),
+                            'notification_sent' => true
+                        ])
+                    );
                 }
                 
                 $success = "Task created successfully!";
-                // Clear form values after successful submission
                 $_POST = [];
                 $_FILES = [];
+                
             } catch (Exception $e) {
                 $db->rollBack();
+                
+                // Log creation failure
+                $activityLogger->logActivity(
+                    $current_user_id,
+                    'task_creation_failed',
+                    'task',
+                    null,
+                    json_encode([
+                        'task_name' => $name,
+                        'project_id' => $project_id,
+                        'error' => $e->getMessage(),
+                        'created_by' => $current_user_id,
+                        'ip_address' => $_SERVER['REMOTE_ADDR']
+                    ])
+                );
+                
                 $error = "Failed to create task: " . $e->getMessage();
             }
         } else {
+            // Log validation errors
+            $activityLogger->logActivity(
+                $current_user_id,
+                'task_validation_failed',
+                'task',
+                null,
+                json_encode([
+                    'errors' => $errors,
+                    'form_data' => [
+                        'name' => $name,
+                        'project_id' => $project_id,
+                        'priority' => $priority
+                    ],
+                    'created_by' => $current_user_id,
+                    'ip_address' => $_SERVER['REMOTE_ADDR']
+                ])
+            );
+            
             $error = implode("<br>", $errors);
         }
     }
     
-    // Handle task update
     if (isset($_POST['update_task'])) {
         $task_id = $_POST['task_id'];
         $name = trim($_POST['name'] ?? '');
@@ -165,7 +228,11 @@ if ($_POST) {
         $end_datetime = $_POST['end_datetime'] ?? '';
         $assignees = $_POST['assignees'] ?? [];
         
-        // Validate required fields
+        // Get old task data for logging
+        $old_task_query = $db->prepare("SELECT * FROM tasks WHERE id = ?");
+        $old_task_query->execute([$task_id]);
+        $old_task = $old_task_query->fetch(PDO::FETCH_ASSOC);
+        
         $errors = [];
         if (empty($name)) {
             $errors[] = "Task name is required.";
@@ -179,36 +246,12 @@ if ($_POST) {
             $errors[] = "Priority selection is required.";
         }
         
-        // Validate date range
         if (!empty($start_datetime) && !empty($end_datetime)) {
             $start_timestamp = strtotime($start_datetime);
             $end_timestamp = strtotime($end_datetime);
             
             if ($end_timestamp < $start_timestamp) {
                 $errors[] = "End date/time cannot be before start date/time.";
-            }
-        }
-        
-        // Validate file uploads for new attachments
-        if (!empty($_FILES['new_attachments']['name'][0])) {
-            $max_file_size = 10 * 1024 * 1024; // 10MB
-            $allowed_types = ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'txt', 'zip'];
-            
-            foreach ($_FILES['new_attachments']['tmp_name'] as $key => $tmp_name) {
-                if ($_FILES['new_attachments']['error'][$key] === UPLOAD_ERR_OK) {
-                    // Check file size
-                    if ($_FILES['new_attachments']['size'][$key] > $max_file_size) {
-                        $errors[] = "File '" . $_FILES['new_attachments']['name'][$key] . "' exceeds 10MB limit.";
-                        continue;
-                    }
-                    
-                    // Check file type
-                    $original_name = $_FILES['new_attachments']['name'][$key];
-                    $file_extension = strtolower(pathinfo($original_name, PATHINFO_EXTENSION));
-                    if (!in_array($file_extension, $allowed_types)) {
-                        $errors[] = "File '" . $original_name . "' has an invalid file type. Allowed types: " . implode(', ', $allowed_types);
-                    }
-                }
             }
         }
         
@@ -237,13 +280,12 @@ if ($_POST) {
                 $stmt->bindParam(':id', $task_id);
                 $stmt->execute();
                 
-                // Update assignees - remove existing and add new
+                // Update assignees
                 $delete_query = "DELETE FROM task_assignments WHERE task_id = :task_id";
                 $delete_stmt = $db->prepare($delete_query);
                 $delete_stmt->bindParam(':task_id', $task_id);
                 $delete_stmt->execute();
                 
-                // Assign new developers
                 foreach ($assignees as $user_id) {
                     $assign_query = "INSERT INTO task_assignments (task_id, user_id) VALUES (:task_id, :user_id)";
                     $assign_stmt = $db->prepare($assign_query);
@@ -285,15 +327,62 @@ if ($_POST) {
                 
                 $db->commit();
                 
-                // Send update notification to assignees
+                // Log task update
+                $activityLogger->logActivity(
+                    $current_user_id,
+                    'update',
+                    'task',
+                    $task_id,
+                    json_encode([
+                        'task_name' => $name,
+                        'old_data' => [
+                            'name' => $old_task['name'],
+                            'project_id' => $old_task['project_id'],
+                            'priority' => $old_task['priority'],
+                            'start_datetime' => $old_task['start_datetime'],
+                            'end_datetime' => $old_task['end_datetime']
+                        ],
+                        'new_data' => [
+                            'name' => $name,
+                            'project_id' => $project_id,
+                            'priority' => $priority,
+                            'start_datetime' => $start_datetime,
+                            'end_datetime' => $end_datetime
+                        ],
+                        'assignees_updated' => true,
+                        'updated_by' => $current_user_id,
+                        'ip_address' => $_SERVER['REMOTE_ADDR']
+                    ])
+                );
+                
+                // Send update notifications
                 if (!empty($assignees)) {
                     $notification->createTaskUpdateNotification($task_id, $assignees);
                 }
                 
                 $success = "Task updated successfully!";
                 
+                // Redirect to remove edit_task parameter from URL after successful update
+                header("Location: tasks.php");
+                exit;
+                
             } catch (Exception $e) {
                 $db->rollBack();
+                
+                // Log update failure
+                $activityLogger->logActivity(
+                    $current_user_id,
+                    'task_update_failed',
+                    'task',
+                    $task_id,
+                    json_encode([
+                        'task_name' => $name,
+                        'error' => $e->getMessage(),
+                        'updated_by' => $current_user_id,
+                        'ip_address' => $_SERVER['REMOTE_ADDR']
+                    ])
+                );
+                
                 $error = "Failed to update task: " . $e->getMessage();
             }
         } else {
@@ -301,7 +390,6 @@ if ($_POST) {
         }
     }
     
-    // Handle task status update
     if (isset($_POST['update_task_status'])) {
         $task_id = $_POST['task_id'];
         $status = $_POST['status'];
@@ -309,8 +397,8 @@ if ($_POST) {
         try {
             $db->beginTransaction();
             
-            // Get current task details
-            $task_query = "SELECT created_by FROM tasks WHERE id = :task_id";
+            // Get task details
+            $task_query = "SELECT * FROM tasks WHERE id = :task_id";
             $task_stmt = $db->prepare($task_query);
             $task_stmt->bindParam(':task_id', $task_id);
             $task_stmt->execute();
@@ -332,27 +420,62 @@ if ($_POST) {
             if ($stmt->execute()) {
                 $db->commit();
                 
-                // Send status update notifications
+                // Log status update
+                $activityLogger->logActivity(
+                    $current_user_id,
+                    'update_status',
+                    'task',
+                    $task_id,
+                    json_encode([
+                        'task_name' => $task['name'],
+                        'old_status' => $task['status'],
+                        'new_status' => $status,
+                        'updated_by' => $current_user_id,
+                        'user_role' => $_SESSION['user_role'],
+                        'ip_address' => $_SERVER['REMOTE_ADDR']
+                    ])
+                );
+                
+                // Send notifications
                 $notification->createTaskStatusUpdateNotification($task_id, $status, $assignees, $task['created_by']);
                 
                 $success = "Task status updated successfully!";
+                
+                // Redirect to remove any query parameters
+                header("Location: tasks.php");
+                exit;
             } else {
                 throw new Exception("Failed to update task status");
             }
         } catch (Exception $e) {
             $db->rollBack();
+            
+            // Log status update failure
+            $activityLogger->logActivity(
+                $current_user_id,
+                'status_update_failed',
+                'task',
+                $task_id,
+                json_encode([
+                    'task_id' => $task_id,
+                    'status' => $status,
+                    'error' => $e->getMessage(),
+                    'updated_by' => $current_user_id,
+                    'ip_address' => $_SERVER['REMOTE_ADDR']
+                ])
+            );
+            
             $error = "Failed to update task status: " . $e->getMessage();
         }
     }
     
-    // Handle attachment deletion
     if (isset($_POST['delete_attachment'])) {
         $attachment_id = $_POST['attachment_id'];
         $task_id = $_POST['task_id'];
         
         try {
             // Get attachment details
-            $attachment_query = "SELECT file_path FROM attachments WHERE id = :id AND entity_type = 'task'";
+            $attachment_query = "SELECT * FROM attachments WHERE id = :id AND entity_type = 'task'";
             $attachment_stmt = $db->prepare($attachment_query);
             $attachment_stmt->bindParam(':id', $attachment_id);
             $attachment_stmt->execute();
@@ -370,7 +493,26 @@ if ($_POST) {
                 $delete_stmt->bindParam(':id', $attachment_id);
                 $delete_stmt->execute();
                 
+                // Log attachment deletion
+                $activityLogger->logActivity(
+                    $current_user_id,
+                    'delete_attachment',
+                    'task',
+                    $task_id,
+                    json_encode([
+                        'attachment_id' => $attachment_id,
+                        'file_name' => $attachment['original_name'],
+                        'file_size' => $attachment['file_size'],
+                        'deleted_by' => $current_user_id,
+                        'ip_address' => $_SERVER['REMOTE_ADDR']
+                    ])
+                );
+                
                 $success = "Attachment deleted successfully!";
+                
+                // Redirect to remove edit_task parameter
+                header("Location: tasks.php?edit_task=" . $task_id);
+                exit;
             }
         } catch (Exception $e) {
             $error = "Failed to delete attachment: " . $e->getMessage();
@@ -430,7 +572,6 @@ if ($_SESSION['user_role'] == 'manager') {
     
     $tasks_query .= " GROUP BY t.id ORDER BY t.created_at DESC";
 } else {
-    // For developers, only show assigned tasks
     $filter_conditions[] = "ta.user_id = :user_id";
     $filter_params[':user_id'] = $_SESSION['user_id'];
     
@@ -468,7 +609,7 @@ $projects = $db->query("SELECT id, name FROM projects WHERE status = 'active'")-
 // Get developers for assignment
 $developers = $db->query("SELECT id, name FROM users WHERE role = 'developer' AND status = 'active'")->fetchAll(PDO::FETCH_ASSOC);
 
-// Define status to color mapping for better maintainability
+// Define status to color mapping
 $statusColors = [
     'closed' => 'success',
     'in_progress' => 'primary',
@@ -482,7 +623,7 @@ $statusColors = [
 // Get task details for edit if task_id is provided
 $edit_task = null;
 $task_attachments = [];
-if (isset($_GET['edit_task'])) {
+if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load if we just submitted an update
     $task_id = $_GET['edit_task'];
     
     $task_query = "SELECT t.*, p.name as project_name FROM tasks t 
@@ -501,7 +642,7 @@ if (isset($_GET['edit_task'])) {
         $assignees_stmt->execute();
         $edit_task['assignees'] = $assignees_stmt->fetchAll(PDO::FETCH_COLUMN);
         
-        // Get attachments - FIXED: Use uploaded_on instead of uploaded_at
+        // Get attachments
         $attachments_query = "SELECT * FROM attachments WHERE entity_type = 'task' AND entity_id = :task_id ORDER BY created_at DESC";
         $attachments_stmt = $db->prepare($attachments_query);
         $attachments_stmt->bindParam(':task_id', $task_id);
@@ -530,10 +671,6 @@ if (isset($_GET['edit_task'])) {
             content: " *";
             color: #dc3545;
         }
-        .filter-btn-group .btn {
-            margin-right: 5px;
-            margin-bottom: 5px;
-        }
         .attachment-item {
             padding: 8px;
             border: 1px solid #dee2e6;
@@ -541,14 +678,31 @@ if (isset($_GET['edit_task'])) {
             margin-bottom: 8px;
             background: #f8f9fa;
         }
-        .attachment-item:hover {
-            background: #e9ecef;
-        }
         .task-table tr {
             cursor: pointer;
         }
         .task-table tr:hover {
             background-color: #f5f5f5;
+        }
+        .activity-log {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .activity-item {
+            border-left: 4px solid;
+            margin-bottom: 8px;
+            padding: 8px;
+            background-color: #f8f9fa;
+            font-size: 0.9rem;
+        }
+        .activity-create { border-color: #28a745; }
+        .activity-update { border-color: #007bff; }
+        .activity-update_status { border-color: #6f42c1; }
+        .activity-delete_attachment { border-color: #dc3545; }
+        .activity-failed { border-color: #fd7e14; }
+        .activity-item small {
+            font-size: 0.8rem;
+            color: #6c757d;
         }
     </style>
     <script>
@@ -563,14 +717,13 @@ if (isset($_GET['edit_task'])) {
             branding: false
         });
         
-        // Client-side form validation for create task
+        // Form validation
         const createTaskForm = document.querySelector('form[method="POST"]');
         if (createTaskForm && createTaskForm.querySelector('button[name="create_task"]')) {
             createTaskForm.addEventListener('submit', function(e) {
                 let isValid = true;
                 const errorMessages = [];
                 
-                // Task name validation
                 const taskName = this.querySelector('input[name="name"]');
                 if (!taskName.value.trim()) {
                     isValid = false;
@@ -584,7 +737,6 @@ if (isset($_GET['edit_task'])) {
                     taskName.classList.remove('is-invalid');
                 }
                 
-                // Project validation
                 const projectSelect = this.querySelector('select[name="project_id"]');
                 if (!projectSelect.value) {
                     isValid = false;
@@ -594,7 +746,6 @@ if (isset($_GET['edit_task'])) {
                     projectSelect.classList.remove('is-invalid');
                 }
                 
-                // Priority validation
                 const prioritySelect = this.querySelector('select[name="priority"]');
                 if (!prioritySelect.value) {
                     isValid = false;
@@ -604,7 +755,6 @@ if (isset($_GET['edit_task'])) {
                     prioritySelect.classList.remove('is-invalid');
                 }
                 
-                // Date validation
                 const startDate = this.querySelector('input[name="start_datetime"]');
                 const endDate = this.querySelector('input[name="end_datetime"]');
                 
@@ -623,41 +773,9 @@ if (isset($_GET['edit_task'])) {
                     }
                 }
                 
-                // File validation
-                const fileInput = this.querySelector('input[name="attachments[]"]');
-                if (fileInput && fileInput.files.length > 0) {
-                    const maxSize = 10 * 1024 * 1024; // 10MB
-                    const allowedTypes = ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'txt', 'zip'];
-                    
-                    for (let i = 0; i < fileInput.files.length; i++) {
-                        const file = fileInput.files[i];
-                        
-                        // Check file size
-                        if (file.size > maxSize) {
-                            isValid = false;
-                            errorMessages.push(`File "${file.name}" exceeds 10MB limit.`);
-                            fileInput.classList.add('is-invalid');
-                            break;
-                        }
-                        
-                        // Check file extension
-                        const fileName = file.name.toLowerCase();
-                        const fileExt = fileName.substring(fileName.lastIndexOf('.') + 1);
-                        if (!allowedTypes.includes(fileExt)) {
-                            isValid = false;
-                            errorMessages.push(`File "${file.name}" has an invalid file type. Allowed types: ${allowedTypes.join(', ')}`);
-                            fileInput.classList.add('is-invalid');
-                            break;
-                        }
-                        
-                        fileInput.classList.remove('is-invalid');
-                    }
-                }
-                
                 if (!isValid) {
                     e.preventDefault();
                     
-                    // Show error alert
                     let alertDiv = document.querySelector('.validation-error-alert');
                     if (!alertDiv) {
                         alertDiv = document.createElement('div');
@@ -668,7 +786,6 @@ if (isset($_GET['edit_task'])) {
                     alertDiv.innerHTML = '<strong>Please fix the following errors:</strong><br>' + 
                                         errorMessages.map(msg => `• ${msg}`).join('<br>');
                     
-                    // Scroll to errors
                     alertDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }
             });
@@ -677,7 +794,6 @@ if (isset($_GET['edit_task'])) {
         // Filter form handling
         const filterForm = document.getElementById('filterForm');
         if (filterForm) {
-            // Clear filters button
             const clearFiltersBtn = document.getElementById('clearFilters');
             if (clearFiltersBtn) {
                 clearFiltersBtn.addEventListener('click', function() {
@@ -685,27 +801,6 @@ if (isset($_GET['edit_task'])) {
                     filterForm.submit();
                 });
             }
-        }
-        
-        // Date range validation for filters
-        const filterStartDate = document.getElementById('filter_start_date');
-        const filterEndDate = document.getElementById('filter_end_date');
-        
-        if (filterStartDate && filterEndDate) {
-            function validateFilterDates() {
-                if (filterStartDate.value && filterEndDate.value) {
-                    const start = new Date(filterStartDate.value);
-                    const end = new Date(filterEndDate.value);
-                    
-                    if (end < start) {
-                        alert('Filter end date cannot be before start date.');
-                        filterEndDate.value = '';
-                    }
-                }
-            }
-            
-            filterStartDate.addEventListener('change', validateFilterDates);
-            filterEndDate.addEventListener('change', validateFilterDates);
         }
         
         // Handle attachment deletion
@@ -718,17 +813,52 @@ if (isset($_GET['edit_task'])) {
             });
         });
         
-        // Auto-open edit modal if edit_task parameter exists
+        // Auto-open edit modal only if we have edit_task parameter and no POST submission
         const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.has('edit_task')) {
-            // Wait for modal to be fully loaded
+        if (urlParams.has('edit_task') && !<?= isset($_POST['update_task']) ? 'true' : 'false' ?>) {
             setTimeout(function() {
                 const editModalElement = document.getElementById('editTaskModal');
                 if (editModalElement) {
                     const editModal = new bootstrap.Modal(editModalElement);
                     editModal.show();
+                    
+                    // Close modal when user clicks outside
+                    editModalElement.addEventListener('hidden.bs.modal', function () {
+                        // Remove edit_task parameter from URL without page reload
+                        const url = new URL(window.location);
+                        url.searchParams.delete('edit_task');
+                        window.history.replaceState({}, '', url);
+                    });
                 }
             }, 100);
+        }
+        
+        // Update task status buttons
+        const updateButtons = document.querySelectorAll('.update-task-status');
+        const updateModal = new bootstrap.Modal(document.getElementById('updateTaskStatusModal'));
+        
+        updateButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const taskId = this.dataset.taskId;
+                const currentStatus = this.dataset.currentStatus;
+                
+                document.getElementById('update_task_id').value = taskId;
+                document.getElementById('update_task_status').value = currentStatus;
+                
+                updateModal.show();
+            });
+        });
+        
+        // Close modal handler for create task modal
+        const createModalElement = document.getElementById('createTaskModal');
+        if (createModalElement) {
+            createModalElement.addEventListener('hidden.bs.modal', function () {
+                // Clear any form errors when modal closes
+                const errorAlert = this.querySelector('.validation-error-alert');
+                if (errorAlert) {
+                    errorAlert.remove();
+                }
+            });
         }
     });
     </script>
@@ -802,45 +932,13 @@ if (isset($_GET['edit_task'])) {
                             </div>
                         </div>
                         
-                        <div class="mt-3 filter-btn-group">
+                        <div class="mt-3">
                             <button type="submit" class="btn btn-primary">
                                 <i class="fas fa-search"></i> Apply Filters
                             </button>
                             <button type="button" class="btn btn-secondary" id="clearFilters">
                                 <i class="fas fa-times"></i> Clear Filters
                             </button>
-                            
-                            <?php if (!empty($filter_project) || !empty($filter_assignee) || !empty($filter_start_date) || !empty($filter_end_date)): ?>
-                            <span class="badge bg-info ms-2">
-                                <i class="fas fa-info-circle"></i> 
-                                <?php
-                                $activeFilters = [];
-                                if (!empty($filter_project)) {
-                                    foreach ($projects as $p) {
-                                        if ($p['id'] == $filter_project) {
-                                            $activeFilters[] = "Project: " . $p['name'];
-                                            break;
-                                        }
-                                    }
-                                }
-                                if (!empty($filter_assignee) && $_SESSION['user_role'] == 'manager') {
-                                    foreach ($developers as $d) {
-                                        if ($d['id'] == $filter_assignee) {
-                                            $activeFilters[] = "Assignee: " . $d['name'];
-                                            break;
-                                        }
-                                    }
-                                }
-                                if (!empty($filter_start_date)) {
-                                    $activeFilters[] = "From: " . date('M j, Y', strtotime($filter_start_date));
-                                }
-                                if (!empty($filter_end_date)) {
-                                    $activeFilters[] = "To: " . date('M j, Y', strtotime($filter_end_date));
-                                }
-                                echo count($tasks) . " tasks found with filters: " . implode(', ', $activeFilters);
-                                ?>
-                            </span>
-                            <?php endif; ?>
                         </div>
                     </form>
                 </div>
@@ -867,12 +965,7 @@ if (isset($_GET['edit_task'])) {
                                 <td colspan="10" class="text-center py-4">
                                     <div class="text-muted">
                                         <i class="fas fa-inbox fa-2x mb-3"></i>
-                                        <p>No tasks found<?= (!empty($filter_project) || !empty($filter_assignee) || !empty($filter_start_date) || !empty($filter_end_date)) ? ' with the current filters' : '' ?>.</p>
-                                        <?php if (!empty($filter_project) || !empty($filter_assignee) || !empty($filter_start_date) || !empty($filter_end_date)): ?>
-                                            <a href="tasks.php" class="btn btn-sm btn-outline-primary">
-                                                Clear filters to see all tasks
-                                            </a>
-                                        <?php endif; ?>
+                                        <p>No tasks found.</p>
                                     </div>
                                 </td>
                             </tr>
@@ -907,21 +1000,14 @@ if (isset($_GET['edit_task'])) {
                                         <?php 
                                         $end_date = strtotime($task['end_datetime']);
                                         $now = time();
-                                        $updated_at = strtotime($task['updated_at']);
                                         $status = $task['status'];
                                         
                                         $class = 'text-muted';
                                         $message = '';
                                         
                                         if ($status == 'closed') {
-                                            // For closed tasks, check if it was closed after the due date
-                                            if ($updated_at > $end_date) {
-                                                $class = 'text-danger';
-                                                $days_overdue = floor(($updated_at - $end_date) / (60 * 60 * 24));
-                                                $message = " (Closed " . $days_overdue . " days late)";
-                                            }
+                                            // Check if closed after due date
                                         } else {
-                                            // For non-closed tasks, check if current date is past due date
                                             if ($now > $end_date) {
                                                 $class = 'text-danger';
                                                 $days_overdue = floor(($now - $end_date) / (60 * 60 * 24));
@@ -1003,9 +1089,6 @@ if (isset($_GET['edit_task'])) {
                                 <input type="text" class="form-control" name="name" required
                                        value="<?= isset($_POST['name']) ? htmlspecialchars($_POST['name']) : '' ?>"
                                        maxlength="255">
-                                <div class="invalid-feedback">
-                                    Please enter a task name (max 255 characters).
-                                </div>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label required">Project</label>
@@ -1018,9 +1101,6 @@ if (isset($_GET['edit_task'])) {
                                         </option>
                                     <?php endforeach; ?>
                                 </select>
-                                <div class="invalid-feedback">
-                                    Please select a project.
-                                </div>
                             </div>
                         </div>
                         
@@ -1033,10 +1113,7 @@ if (isset($_GET['edit_task'])) {
                             <label class="form-label">Attachments</label>
                             <input type="file" class="form-control" name="attachments[]" multiple 
                                    accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip">
-                            <small class="text-muted">You can select multiple files. Maximum 10MB per file. Allowed types: JPG, PNG, GIF, PDF, DOC, DOCX, TXT, ZIP</small>
-                            <div class="invalid-feedback">
-                                Please check file size and type restrictions.
-                            </div>
+                            <small class="text-muted">Max 10MB per file. Allowed types: JPG, PNG, GIF, PDF, DOC, DOCX, TXT, ZIP</small>
                         </div>
                         
                         <div class="row">
@@ -1048,9 +1125,6 @@ if (isset($_GET['edit_task'])) {
                                     <option value="high" <?= (isset($_POST['priority']) && $_POST['priority'] == 'high') ? 'selected' : '' ?>>High</option>
                                     <option value="critical" <?= (isset($_POST['priority']) && $_POST['priority'] == 'critical') ? 'selected' : '' ?>>Critical</option>
                                 </select>
-                                <div class="invalid-feedback">
-                                    Please select a priority.
-                                </div>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Assign Developers</label>
@@ -1062,7 +1136,7 @@ if (isset($_GET['edit_task'])) {
                                         </option>
                                     <?php endforeach; ?>
                                 </select>
-                                <small class="text-muted">Hold Ctrl to select multiple developers</small>
+                                <small class="text-muted">Hold Ctrl to select multiple</small>
                             </div>
                         </div>
                         
@@ -1071,17 +1145,11 @@ if (isset($_GET['edit_task'])) {
                                 <label class="form-label required">Start Date & Time</label>
                                 <input type="datetime-local" class="form-control" name="start_datetime" required
                                        value="<?= isset($_POST['start_datetime']) ? htmlspecialchars($_POST['start_datetime']) : '' ?>">
-                                <div class="invalid-feedback">
-                                    Start date cannot be after end date.
-                                </div>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label required">End Date & Time</label>
                                 <input type="datetime-local" class="form-control" name="end_datetime" required
                                        value="<?= isset($_POST['end_datetime']) ? htmlspecialchars($_POST['end_datetime']) : '' ?>">
-                                <div class="invalid-feedback">
-                                    End date cannot be before start date.
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -1094,7 +1162,7 @@ if (isset($_GET['edit_task'])) {
         </div>
     </div>
     
-    <!-- Edit Task Modal - Always in DOM but only populated when needed -->
+    <!-- Edit Task Modal -->
     <div class="modal fade" id="editTaskModal" tabindex="-1">
         <div class="modal-dialog modal-lg">
             <div class="modal-content">
@@ -1132,7 +1200,6 @@ if (isset($_GET['edit_task'])) {
                             <textarea class="form-control wysiwyg" name="description"><?= htmlspecialchars($edit_task['description']) ?></textarea>
                         </div>
 
-                        <!-- Existing Attachments -->
                         <?php if (!empty($task_attachments)): ?>
                         <div class="mb-3">
                             <label class="form-label">Existing Attachments</label>
@@ -1163,7 +1230,6 @@ if (isset($_GET['edit_task'])) {
                             <label class="form-label">Add New Attachments</label>
                             <input type="file" class="form-control" name="new_attachments[]" multiple 
                                    accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip">
-                            <small class="text-muted">You can select multiple files. Maximum 10MB per file. Allowed types: JPG, PNG, GIF, PDF, DOC, DOCX, TXT, ZIP</small>
                         </div>
                         
                         <div class="row">
@@ -1186,7 +1252,6 @@ if (isset($_GET['edit_task'])) {
                                         </option>
                                     <?php endforeach; ?>
                                 </select>
-                                <small class="text-muted">Hold Ctrl to select multiple developers</small>
                             </div>
                         </div>
                         
@@ -1254,51 +1319,32 @@ if (isset($_GET['edit_task'])) {
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const updateButtons = document.querySelectorAll('.update-task-status');
-            const updateModal = new bootstrap.Modal(document.getElementById('updateTaskStatusModal'));
-            
-            updateButtons.forEach(button => {
-                button.addEventListener('click', function() {
-                    const taskId = this.dataset.taskId;
-                    const currentStatus = this.dataset.currentStatus;
-                    
-                    document.getElementById('update_task_id').value = taskId;
-                    document.getElementById('update_task_status').value = currentStatus;
-                    
-                    updateModal.show();
-                });
-            });
-            
-            // Clear validation errors when modal is closed
-            const createTaskModal = document.getElementById('createTaskModal');
-            if (createTaskModal) {
-                createTaskModal.addEventListener('hidden.bs.modal', function() {
-                    const invalidElements = this.querySelectorAll('.is-invalid');
-                    invalidElements.forEach(el => el.classList.remove('is-invalid'));
-                    
-                    const errorAlert = this.querySelector('.validation-error-alert');
-                    if (errorAlert) {
-                        errorAlert.remove();
-                    }
-                });
-            }
-            
-            // Edit modal handling
-            const editModalElement = document.getElementById('editTaskModal');
-            if (editModalElement) {
-                editModalElement.addEventListener('hidden.bs.modal', function() {
-                    // Clear the edit_task parameter from URL when modal is closed
-                    const urlParams = new URLSearchParams(window.location.search);
-                    if (urlParams.has('edit_task')) {
-                        urlParams.delete('edit_task');
-                        const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
-                        window.history.replaceState({}, document.title, newUrl);
-                    }
-                });
-            }
-        });
-    </script>
 </body>
 </html>
+
+<?php
+function getTaskActivityDescription($log) {
+    switch ($log['action']) {
+        case 'create':
+            return ' created a task';
+        case 'update':
+            return ' updated a task';
+        case 'update_status':
+            return ' changed task status';
+        case 'delete_attachment':
+            return ' deleted an attachment';
+        case 'task_assignment_notifications':
+            return ' sent assignment notifications';
+        case 'task_creation_failed':
+            return ' failed to create task';
+        case 'task_update_failed':
+            return ' failed to update task';
+        case 'status_update_failed':
+            return ' failed to update status';
+        case 'task_validation_failed':
+            return ' task validation failed';
+        default:
+            return ' performed ' . $log['action'] . ' action';
+    }
+}
+?>

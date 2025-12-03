@@ -1,10 +1,14 @@
 <?php
 include 'config/database.php';
 include 'includes/EmailService.php';
+include 'includes/activity_logger.php'; // Add ActivityLogger include
 
 $database = new Database();
 $db = $database->getConnection();
 $emailService = new EmailService($db);
+
+// Initialize ActivityLogger
+$activityLogger = new ActivityLogger($db);
 
 $message = '';
 $message_type = '';
@@ -58,9 +62,38 @@ if ($_POST && isset($_POST['email'])) {
             ";
             
             if ($emailService->sendEmail($email, $subject, $message)) {
+                // Log password reset request
+                $activityLogger->logActivity(
+                    $user['id'],
+                    'password_reset_request',
+                    'user',
+                    $user['id'],
+                    json_encode([
+                        'email' => $email,
+                        'ip_address' => $_SERVER['REMOTE_ADDR'],
+                        'user_agent' => $_SERVER['HTTP_USER_AGENT'],
+                        'reset_token_generated' => true,
+                        'email_sent' => true
+                    ])
+                );
+                
                 $message = "Password reset link has been sent to your email!";
                 $message_type = "success";
             } else {
+                // Log failed email send
+                $activityLogger->logActivity(
+                    $user['id'],
+                    'password_reset_email_failed',
+                    'user',
+                    $user['id'],
+                    json_encode([
+                        'email' => $email,
+                        'ip_address' => $_SERVER['REMOTE_ADDR'],
+                        'reset_token_generated' => true,
+                        'email_sent' => false
+                    ])
+                );
+                
                 $message = "Failed to send email. Please try again later.";
                 $message_type = "danger";
             }
@@ -69,6 +102,20 @@ if ($_POST && isset($_POST['email'])) {
             $message_type = "danger";
         }
     } else {
+        // Log failed password reset attempt (user not found)
+        $activityLogger->logActivity(
+            null,
+            'failed_password_reset_request',
+            'user',
+            null,
+            json_encode([
+                'email' => $email,
+                'ip_address' => $_SERVER['REMOTE_ADDR'],
+                'user_agent' => $_SERVER['HTTP_USER_AGENT'],
+                'reason' => 'user_not_found_or_inactive'
+            ])
+        );
+        
         $message = "No account found with that email address.";
         $message_type = "danger";
     }

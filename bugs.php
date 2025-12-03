@@ -2,14 +2,16 @@
 include 'config/database.php';
 include 'includes/auth.php';
 include 'includes/notifications.php';
+include 'includes/activity_logger.php'; // New include for activity logging
 
 $database = new Database();
 $db = $database->getConnection();
 $auth = new Auth($db);
 $auth->requireRole(['manager', 'qa']);
 
-// Initialize notification service
+// Initialize services
 $notification = new Notification($db);
+$activityLogger = new ActivityLogger($db); // Initialize activity logger
 
 // Handle form submissions
 if ($_POST) {
@@ -27,8 +29,9 @@ if ($_POST) {
         
         // Validate project exists
         if (!empty($_POST['project_id'])) {
-            $project_check = $db->prepare("SELECT id FROM projects WHERE id = ? AND status = 'active'");
+            $project_check = $db->prepare("SELECT id, name FROM projects WHERE id = ? AND status = 'active'");
             $project_check->execute([$_POST['project_id']]);
+            $project_data = $project_check->fetch(PDO::FETCH_ASSOC);
             if ($project_check->rowCount() === 0) {
                 $errors[] = "Selected project does not exist or is not active.";
             }
@@ -36,8 +39,9 @@ if ($_POST) {
         
         // Validate task exists and belongs to the selected project
         if (!empty($_POST['task_id']) && !empty($_POST['project_id'])) {
-            $task_check = $db->prepare("SELECT id FROM tasks WHERE id = ? AND project_id = ?");
+            $task_check = $db->prepare("SELECT id, name FROM tasks WHERE id = ? AND project_id = ?");
             $task_check->execute([$_POST['task_id'], $_POST['project_id']]);
+            $task_data = $task_check->fetch(PDO::FETCH_ASSOC);
             if ($task_check->rowCount() === 0) {
                 $errors[] = "Selected task does not exist in the chosen project.";
             }
@@ -109,6 +113,7 @@ if ($_POST) {
                 $bug_id = $db->lastInsertId();
                 
                 // Handle file uploads for the bug
+                $file_count = 0;
                 if (!empty($_FILES['attachments']['name'][0])) {
                     $upload_dir = 'uploads/bugs/' . $bug_id . '/';
                     if (!is_dir($upload_dir)) {
@@ -134,12 +139,34 @@ if ($_POST) {
                                 $stmt->bindParam(':file_type', $_FILES['attachments']['type'][$key]);
                                 $stmt->bindParam(':uploaded_by', $_SESSION['user_id']);
                                 $stmt->execute();
+                                $file_count++;
                             }
                         }
                     }
                 }
                 
                 $db->commit();
+                
+                // Log the activity
+                $activity_details = [
+                    'bug_id' => $bug_id,
+                    'bug_name' => $name,
+                    'task_id' => $task_id,
+                    'task_name' => $task_data['name'] ?? 'Unknown Task',
+                    'project_id' => $project_id,
+                    'project_name' => $project_data['name'] ?? 'Unknown Project',
+                    'priority' => $priority,
+                    'status' => $status,
+                    'files_uploaded' => $file_count
+                ];
+                
+                $activityLogger->logActivity(
+                    $_SESSION['user_id'],
+                    'bug_created',
+                    'Bug reported',
+                    json_encode($activity_details),
+                    $bug_id
+                );
                 
                 // Send bug report notification
                 $notification->createBugReportNotification($bug_id);
@@ -152,6 +179,15 @@ if ($_POST) {
             } catch (Exception $e) {
                 $db->rollBack();
                 $error = "Failed to report bug: " . $e->getMessage();
+                
+                // Log the error
+                $activityLogger->logActivity(
+                    $_SESSION['user_id'],
+                    'bug_create_error',
+                    'Failed to report bug',
+                    json_encode(['error' => $e->getMessage(), 'bug_name' => $name ?? 'Unknown']),
+                    null
+                );
             }
         } else {
             $error = implode("<br>", $errors);
@@ -169,6 +205,13 @@ if ($_POST) {
         $status = $_POST['status'];
         $start_datetime = !empty($_POST['start_datetime']) ? $_POST['start_datetime'] : null;
         $end_datetime = !empty($_POST['end_datetime']) ? $_POST['end_datetime'] : null;
+        
+        // Get current bug data for comparison
+        $current_bug_query = "SELECT * FROM bugs WHERE id = :id";
+        $current_bug_stmt = $db->prepare($current_bug_query);
+        $current_bug_stmt->bindParam(':id', $bug_id);
+        $current_bug_stmt->execute();
+        $current_bug = $current_bug_stmt->fetch(PDO::FETCH_ASSOC);
         
         // Validate required fields
         $errors = [];
@@ -243,6 +286,7 @@ if ($_POST) {
                 $stmt->execute();
                 
                 // Handle new file uploads
+                $new_file_count = 0;
                 if (!empty($_FILES['new_attachments']['name'][0])) {
                     $upload_dir = 'uploads/bugs/' . $bug_id . '/';
                     if (!is_dir($upload_dir)) {
@@ -268,12 +312,39 @@ if ($_POST) {
                                 $stmt->bindParam(':file_type', $_FILES['new_attachments']['type'][$key]);
                                 $stmt->bindParam(':uploaded_by', $_SESSION['user_id']);
                                 $stmt->execute();
+                                $new_file_count++;
                             }
                         }
                     }
                 }
                 
                 $db->commit();
+                
+                // Prepare activity details
+                $changes = [];
+                if ($current_bug['name'] != $name) $changes['name'] = ['from' => $current_bug['name'], 'to' => $name];
+                if ($current_bug['description'] != $description) $changes['description'] = ['type' => 'updated'];
+                if ($current_bug['task_id'] != $task_id) $changes['task'] = ['from' => $current_bug['task_id'], 'to' => $task_id];
+                if ($current_bug['priority'] != $priority) $changes['priority'] = ['from' => $current_bug['priority'], 'to' => $priority];
+                if ($current_bug['status'] != $status) $changes['status'] = ['from' => $current_bug['status'], 'to' => $status];
+                if ($current_bug['start_datetime'] != $start_datetime) $changes['start_date'] = ['from' => $current_bug['start_datetime'], 'to' => $start_datetime];
+                if ($current_bug['end_datetime'] != $end_datetime) $changes['end_date'] = ['from' => $current_bug['end_datetime'], 'to' => $end_datetime];
+                
+                $activity_details = [
+                    'bug_id' => $bug_id,
+                    'bug_name' => $name,
+                    'changes' => $changes,
+                    'new_files_uploaded' => $new_file_count
+                ];
+                
+                // Log the activity
+                $activityLogger->logActivity(
+                    $_SESSION['user_id'],
+                    'bug_updated',
+                    'Bug updated',
+                    json_encode($activity_details),
+                    $bug_id
+                );
                 
                 // Send bug update notification
                 $notification->createBugUpdateNotification($bug_id);
@@ -283,6 +354,15 @@ if ($_POST) {
             } catch (Exception $e) {
                 $db->rollBack();
                 $error = "Failed to update bug: " . $e->getMessage();
+                
+                // Log the error
+                $activityLogger->logActivity(
+                    $_SESSION['user_id'],
+                    'bug_update_error',
+                    'Failed to update bug',
+                    json_encode(['error' => $e->getMessage(), 'bug_id' => $bug_id]),
+                    $bug_id
+                );
             }
         } else {
             $error = implode("<br>", $errors);
@@ -292,6 +372,13 @@ if ($_POST) {
     if (isset($_POST['update_bug_status'])) {
         $bug_id = $_POST['bug_id'];
         $status = $_POST['status'];
+        
+        // Get current bug status and name
+        $current_bug_query = "SELECT name, status FROM bugs WHERE id = :id";
+        $current_bug_stmt = $db->prepare($current_bug_query);
+        $current_bug_stmt->bindParam(':id', $bug_id);
+        $current_bug_stmt->execute();
+        $current_bug = $current_bug_stmt->fetch(PDO::FETCH_ASSOC);
         
         try {
             $db->beginTransaction();
@@ -320,6 +407,24 @@ if ($_POST) {
             if ($stmt->execute()) {
                 $db->commit();
                 
+                // Log the status change activity
+                $activity_details = [
+                    'bug_id' => $bug_id,
+                    'bug_name' => $current_bug['name'],
+                    'status_change' => [
+                        'from' => $current_bug['status'],
+                        'to' => $status
+                    ]
+                ];
+                
+                $activityLogger->logActivity(
+                    $_SESSION['user_id'],
+                    'bug_status_updated',
+                    'Bug status updated',
+                    json_encode($activity_details),
+                    $bug_id
+                );
+                
                 // Send bug status update notification
                 if ($bug) {
                     $assignee_ids = !empty($bug['assignee_ids']) ? explode(',', $bug['assignee_ids']) : [];
@@ -333,6 +438,15 @@ if ($_POST) {
         } catch (Exception $e) {
             $db->rollBack();
             $error = "Failed to update bug status: " . $e->getMessage();
+            
+            // Log the error
+            $activityLogger->logActivity(
+                $_SESSION['user_id'],
+                'bug_status_update_error',
+                'Failed to update bug status',
+                json_encode(['error' => $e->getMessage(), 'bug_id' => $bug_id]),
+                $bug_id
+            );
         }
     }
     
@@ -343,7 +457,7 @@ if ($_POST) {
         
         try {
             // Get attachment details
-            $attachment_query = "SELECT file_path FROM attachments WHERE id = :id AND entity_type = 'bug'";
+            $attachment_query = "SELECT file_path, original_name FROM attachments WHERE id = :id AND entity_type = 'bug'";
             $attachment_stmt = $db->prepare($attachment_query);
             $attachment_stmt->bindParam(':id', $attachment_id);
             $attachment_stmt->execute();
@@ -361,10 +475,34 @@ if ($_POST) {
                 $delete_stmt->bindParam(':id', $attachment_id);
                 $delete_stmt->execute();
                 
+                // Log the activity
+                $activity_details = [
+                    'bug_id' => $bug_id,
+                    'attachment_name' => $attachment['original_name'],
+                    'attachment_path' => $attachment['file_path']
+                ];
+                
+                $activityLogger->logActivity(
+                    $_SESSION['user_id'],
+                    'bug_attachment_deleted',
+                    'Bug attachment deleted',
+                    json_encode($activity_details),
+                    $bug_id
+                );
+                
                 $success = "Attachment deleted successfully!";
             }
         } catch (Exception $e) {
             $error = "Failed to delete attachment: " . $e->getMessage();
+            
+            // Log the error
+            $activityLogger->logActivity(
+                $_SESSION['user_id'],
+                'attachment_delete_error',
+                'Failed to delete attachment',
+                json_encode(['error' => $e->getMessage(), 'attachment_id' => $attachment_id]),
+                $bug_id
+            );
         }
     }
 }
@@ -509,6 +647,23 @@ if (isset($_GET['edit_bug'])) {
         .attachment-item:hover {
             background: #e9ecef;
         }
+        .activity-log {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .activity-item {
+            padding: 8px;
+            border-bottom: 1px solid #dee2e6;
+            font-size: 0.9rem;
+        }
+        .activity-item:last-child {
+            border-bottom: none;
+        }
+        .activity-icon {
+            width: 24px;
+            text-align: center;
+            margin-right: 8px;
+        }
     </style>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -558,10 +713,18 @@ if (isset($_GET['edit_bug'])) {
                 <!-- Filter Section -->
                 <div class="card mb-4">
                     <div class="card-header">
-                        <h5 class="mb-0">Filters</h5>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Filters</h5>
+                            <a href="?view_activities=<?= isset($_GET['view_activities']) && $_GET['view_activities'] == 'true' ? 'false' : 'true' ?>" 
+                               class="btn btn-sm btn-outline-info">
+                                <i class="fas fa-history"></i> 
+                                <?= isset($_GET['view_activities']) && $_GET['view_activities'] == 'true' ? 'Hide Activities' : 'Show Activities' ?>
+                            </a>
+                        </div>
                     </div>
                     <div class="card-body">
                         <form method="GET" class="row g-3">
+                            <input type="hidden" name="view_activities" value="<?= $_GET['view_activities'] ?? '' ?>">
                             <div class="col-md-4">
                                 <label class="form-label">Project</label>
                                 <select class="form-select" name="project_filter" id="projectFilter" onchange="this.form.submit()">
@@ -592,7 +755,8 @@ if (isset($_GET['edit_bug'])) {
                                 </select>
                             </div>
                             <div class="col-md-4 d-flex align-items-end">
-                                <a href="bugs.php" class="btn btn-outline-secondary">Clear Filters</a>
+                                <a href="bugs.php<?= isset($_GET['view_activities']) && $_GET['view_activities'] == 'true' ? '?view_activities=true' : '' ?>" 
+                                   class="btn btn-outline-secondary">Clear Filters</a>
                             </div>
                         </form>
                     </div>

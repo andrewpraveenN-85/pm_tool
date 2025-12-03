@@ -1,10 +1,14 @@
 <?php
 include 'config/database.php';
 include 'includes/auth.php';
+include 'includes/activity_logger.php'; // Add ActivityLogger include
 
 $database = new Database();
 $db = $database->getConnection();
 $auth = new Auth($db);
+
+// Initialize ActivityLogger
+$activityLogger = new ActivityLogger($db);
 
 // Redirect to dashboard if already logged in
 if ($auth->isLoggedIn()) {
@@ -16,6 +20,17 @@ if ($auth->isLoggedIn()) {
 if (isset($_COOKIE['remember_me']) && !$auth->isLoggedIn()) {
     $token = $_COOKIE['remember_me'];
     if ($auth->loginWithToken($token)) {
+        // Log successful token-based login
+        $activityLogger->logActivity(
+            $_SESSION['user_id'],
+            'login',
+            'user',
+            $_SESSION['user_id'],
+            json_encode([
+                'login_type' => 'remember_me_token',
+                'ip_address' => $_SERVER['REMOTE_ADDR']
+            ])
+        );
         header("Location: dashboard.php");
         exit;
     }
@@ -27,9 +42,33 @@ if ($_POST) {
     $remember_me = isset($_POST['remember_me']);
     
     if ($auth->login($email, $password, $remember_me)) {
+        // Log successful login
+        $activityLogger->logActivity(
+            $_SESSION['user_id'],
+            'login',
+            'user',
+            $_SESSION['user_id'],
+            json_encode([
+                'login_type' => 'credentials',
+                'remember_me' => $remember_me,
+                'ip_address' => $_SERVER['REMOTE_ADDR']
+            ])
+        );
         header("Location: dashboard.php");
         exit;
     } else {
+        // Log failed login attempt
+        $activityLogger->logActivity(
+            null,
+            'failed_login',
+            'user',
+            null,
+            json_encode([
+                'email' => $email,
+                'ip_address' => $_SERVER['REMOTE_ADDR'],
+                'user_agent' => $_SERVER['HTTP_USER_AGENT']
+            ])
+        );
         $error = "Invalid email or password!";
     }
 }

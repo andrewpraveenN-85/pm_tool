@@ -2,6 +2,7 @@
 include 'config/database.php';
 include 'includes/auth.php';
 include 'includes/EmailService.php';
+include 'includes/activity_logger.php'; // Add ActivityLogger include
 
 $database = new Database();
 $db = $database->getConnection();
@@ -10,6 +11,12 @@ $auth->requireRole(['manager']);
 
 // Initialize EmailService
 $emailService = new EmailService($db);
+
+// Initialize ActivityLogger
+$activityLogger = new ActivityLogger($db);
+
+// Get current user ID from session
+$current_user_id = $_SESSION['user_id'] ?? null;
 
 /**
  * Get base URL for the application
@@ -222,7 +229,23 @@ if ($_POST) {
                 $stmt->bindParam(':created_by', $_SESSION['user_id']);
                 
                 if ($stmt->execute()) {
+                    $user_id = $db->lastInsertId(); // Get the ID of the created user
                     $db->commit();
+                    
+                    // Log the user creation activity
+                    $activityLogger->logActivity(
+                        $current_user_id,
+                        'create',
+                        'user',
+                        $user_id,
+                        json_encode([
+                            'name' => $name,
+                            'email' => $email,
+                            'role' => $role,
+                            'status' => $status,
+                            'created_by' => $_SESSION['user_id']
+                        ])
+                    );
                     
                     // Send email notification with access details
                     $emailSent = sendUserCreationEmail($name, $email, $plain_password, $role, $status);
@@ -330,6 +353,11 @@ if ($_POST) {
             $role = $_POST['role'];
             $status = $_POST['status'];
             
+            // Get old user data for logging
+            $old_user_query = $db->prepare("SELECT name, email, role, status FROM users WHERE id = ?");
+            $old_user_query->execute([$id]);
+            $old_user_data = $old_user_query->fetch(PDO::FETCH_ASSOC);
+            
             try {
                 $db->beginTransaction();
                 
@@ -357,6 +385,25 @@ if ($_POST) {
                 
                 if ($stmt->execute()) {
                     $db->commit();
+                    
+                    // Log the user update activity
+                    $activityLogger->logActivity(
+                        $current_user_id,
+                        'update',
+                        'user',
+                        $id,
+                        json_encode([
+                            'old_data' => $old_user_data,
+                            'new_data' => [
+                                'name' => $name,
+                                'email' => $email,
+                                'role' => $role,
+                                'status' => $status,
+                                'password_changed' => !empty($password)
+                            ]
+                        ])
+                    );
+                    
                     $success = "User updated successfully!";
                 } else {
                     throw new Exception("Failed to update user!");
@@ -388,6 +435,7 @@ $user_stats = $db->query("
     FROM users 
     GROUP BY role
 ")->fetchAll(PDO::FETCH_ASSOC);
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -417,6 +465,19 @@ $user_stats = $db->query("
         .form-text li {
             font-size: 0.875rem;
         }
+        .activity-log {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .activity-item {
+            border-left: 4px solid;
+            margin-bottom: 10px;
+            padding-left: 10px;
+        }
+        .activity-create { border-color: #28a745; }
+        .activity-update { border-color: #007bff; }
+        .activity-delete { border-color: #dc3545; }
+        .activity-user { background-color: #f8f9fa; }
     </style>
 </head>
 <body>
@@ -447,27 +508,32 @@ $user_stats = $db->query("
                     <div class="alert alert-danger"><?= $error ?></div>
                 <?php endif; ?>
 
-                <!-- User Statistics -->
+                <!-- User Statistics and Activity Log -->
                 <div class="row mb-4">
-                    <?php foreach ($user_stats as $stat): ?>
-                    <div class="col-md-4">
-                        <div class="card text-center">
-                            <div class="card-body">
-                                <h3 class="text-<?= 
-                                    $stat['role'] == 'manager' ? 'primary' : 
-                                    ($stat['role'] == 'developer' ? 'success' : 'warning') 
-                                ?>"><?= $stat['count'] ?></h3>
-                                <p class="text-muted mb-1"><?= ucfirst($stat['role']) ?>s</p>
-                                <small class="text-success"><?= $stat['active_count'] ?> active</small>
+                    <!-- User Statistics -->
+                    <div class="col-md-12">
+                        <div class="row">
+                            <?php foreach ($user_stats as $stat): ?>
+                            <div class="col-md-4 mb-3">
+                                <div class="card text-center">
+                                    <div class="card-body">
+                                        <h3 class="text-<?= 
+                                            $stat['role'] == 'manager' ? 'primary' : 
+                                            ($stat['role'] == 'developer' ? 'success' : 'warning') 
+                                        ?>"><?= $stat['count'] ?></h3>
+                                        <p class="text-muted mb-1"><?= ucfirst($stat['role']) ?>s</p>
+                                        <small class="text-success"><?= $stat['active_count'] ?> active</small>
+                                    </div>
+                                </div>
                             </div>
+                            <?php endforeach; ?>
                         </div>
                     </div>
-                    <?php endforeach; ?>
                 </div>
 
                 <!-- Users Table -->
                 <div class="card">
-                    <div class="card-header">
+                    <div class="card-header d-flex justify-content-between align-items-center">
                         <h5 class="mb-0">All Users</h5>
                     </div>
                     <div class="card-body">

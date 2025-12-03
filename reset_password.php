@@ -1,8 +1,12 @@
 <?php
 include 'config/database.php';
+include 'includes/activity_logger.php'; // Add ActivityLogger include
 
 $database = new Database();
 $db = $database->getConnection();
+
+// Initialize ActivityLogger
+$activityLogger = new ActivityLogger($db);
 
 $message = '';
 $message_type = '';
@@ -20,7 +24,41 @@ if ($token) {
         $reset_request = $stmt->fetch(PDO::FETCH_ASSOC);
         $valid_token = true;
         $email = $reset_request['email'];
+        
+        // Get user ID for logging
+        $user_query = $db->prepare("SELECT id FROM users WHERE email = ?");
+        $user_query->execute([$email]);
+        $user = $user_query->fetch(PDO::FETCH_ASSOC);
+        $user_id = $user['id'] ?? null;
+        
+        // Log token validation
+        $activityLogger->logActivity(
+            $user_id,
+            'password_reset_token_validated',
+            'user',
+            $user_id,
+            json_encode([
+                'email' => $email,
+                'ip_address' => $_SERVER['REMOTE_ADDR'],
+                'token_valid' => true,
+                'token_expires' => $reset_request['expires_at']
+            ])
+        );
     } else {
+        // Log invalid token attempt
+        $activityLogger->logActivity(
+            null,
+            'invalid_password_reset_token',
+            'user',
+            null,
+            json_encode([
+                'token' => $token,
+                'ip_address' => $_SERVER['REMOTE_ADDR'],
+                'user_agent' => $_SERVER['HTTP_USER_AGENT'],
+                'reason' => 'invalid_or_expired'
+            ])
+        );
+        
         $message = "Invalid or expired reset token.";
         $message_type = "danger";
     }
@@ -34,6 +72,18 @@ if ($_POST && isset($_POST['password']) && $valid_token) {
     if ($password !== $confirm_password) {
         $message = "Passwords do not match!";
         $message_type = "danger";
+        
+        // Log password mismatch
+        $activityLogger->logActivity(
+            $user_id,
+            'password_reset_mismatch',
+            'user',
+            $user_id,
+            json_encode([
+                'email' => $email,
+                'ip_address' => $_SERVER['REMOTE_ADDR']
+            ])
+        );
     } else {
         // Update password
         $hashed_password = password_hash($password, PASSWORD_DEFAULT);
@@ -50,12 +100,39 @@ if ($_POST && isset($_POST['password']) && $valid_token) {
             $stmt->bindParam(':token', $token);
             $stmt->execute();
             
+            // Log successful password reset
+            $activityLogger->logActivity(
+                $user_id,
+                'password_reset_success',
+                'user',
+                $user_id,
+                json_encode([
+                    'email' => $email,
+                    'ip_address' => $_SERVER['REMOTE_ADDR'],
+                    'user_agent' => $_SERVER['HTTP_USER_AGENT'],
+                    'reset_completed' => true
+                ])
+            );
+            
             $message = "Password reset successfully! You can now login with your new password.";
             $message_type = "success";
             $valid_token = false; // Token is now used
         } else {
             $message = "Error resetting password. Please try again.";
             $message_type = "danger";
+            
+            // Log password reset failure
+            $activityLogger->logActivity(
+                $user_id,
+                'password_reset_failed',
+                'user',
+                $user_id,
+                json_encode([
+                    'email' => $email,
+                    'ip_address' => $_SERVER['REMOTE_ADDR'],
+                    'error' => 'database_update_failed'
+                ])
+            );
         }
     }
 }

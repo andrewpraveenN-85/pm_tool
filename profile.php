@@ -1,16 +1,23 @@
 <?php
 include 'config/database.php';
 include 'includes/auth.php';
+include 'includes/activity_logger.php'; // Add ActivityLogger include
 
 $database = new Database();
 $db = $database->getConnection();
 $auth = new Auth($db);
 $auth->requireAuth();
 
+// Initialize ActivityLogger
+$activityLogger = new ActivityLogger($db);
+
+// Get current user ID from session
+$current_user_id = $_SESSION['user_id'];
+
 // Get current user data
 $query = "SELECT * FROM users WHERE id = :user_id";
 $stmt = $db->prepare($query);
-$stmt->bindParam(':user_id', $_SESSION['user_id']);
+$stmt->bindParam(':user_id', $current_user_id);
 $stmt->execute();
 $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -125,15 +132,35 @@ if ($_POST && isset($_POST['update_profile'])) {
         $name = $_POST['name'];
         $email = $_POST['email'];
         
+        // Store old user data for logging
+        $old_user_data = [
+            'name' => $user['name'],
+            'email' => $user['email'],
+            'image' => $user['image']
+        ];
+        
+        // Prepare changed fields array
+        $changed_fields = [];
+        if ($old_user_data['name'] !== $name) {
+            $changed_fields[] = 'name';
+        }
+        if ($old_user_data['email'] !== $email) {
+            $changed_fields[] = 'email';
+        }
+        
         // Handle password update if provided
         $password_update = '';
+        $password_changed = false;
         if (!empty($_POST['password'])) {
             $hashed_password = password_hash($_POST['password'], PASSWORD_DEFAULT);
             $password_update = ", password = :password";
+            $password_changed = true;
+            $changed_fields[] = 'password';
         }
         
         // Handle image upload
         $image = $user['image'];
+        $image_changed = false;
         if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
             $upload_dir = 'uploads/profiles/';
             if (!is_dir($upload_dir)) {
@@ -158,6 +185,8 @@ if ($_POST && isset($_POST['update_profile'])) {
                     @unlink($image);
                 }
                 $image = $target_file;
+                $image_changed = true;
+                $changed_fields[] = 'profile_image';
                 
                 // Update session
                 $_SESSION['user_image'] = $target_file;
@@ -184,6 +213,31 @@ if ($_POST && isset($_POST['update_profile'])) {
                 // Update session
                 $_SESSION['user_name'] = $name;
                 $_SESSION['user_email'] = $email;
+                
+                // Log the profile update activity
+                if (!empty($changed_fields)) {
+                    $activityLogger->logActivity(
+                        $current_user_id,
+                        'update',
+                        'profile',
+                        $current_user_id,
+                        json_encode([
+                            'old_data' => [
+                                'name' => $old_user_data['name'],
+                                'email' => $old_user_data['email'],
+                                'image_changed' => $image_changed
+                            ],
+                            'new_data' => [
+                                'name' => $name,
+                                'email' => $email,
+                                'password_changed' => $password_changed,
+                                'image_changed' => $image_changed
+                            ],
+                            'changed_fields' => $changed_fields,
+                            'update_type' => 'self_update'
+                        ])
+                    );
+                }
                 
                 $success = "Profile updated successfully!";
                 
@@ -236,15 +290,33 @@ if ($_POST && isset($_POST['update_profile'])) {
         .password-requirements {
             display: none;
         }
+        .activity-log {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .activity-item {
+            border-left: 4px solid;
+            margin-bottom: 10px;
+            padding-left: 10px;
+            background-color: #f8f9fa;
+        }
+        .activity-update { border-color: #007bff; }
+        .activity-item small {
+            font-size: 0.8rem;
+        }
+        .changed-fields {
+            font-size: 0.85rem;
+            color: #666;
+        }
     </style>
 </head>
 <body>
     <?php include 'includes/header.php'; ?>
     
     <div class="container mt-4">
-        <div class="row justify-content-center">
-            <div class="col-md-8">
-                <div class="card">
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card mb-4">
                     <div class="card-header">
                         <h4 class="mb-0">User Profile</h4>
                     </div>
