@@ -41,7 +41,7 @@ if ($_SESSION['user_role'] == 'developer') {
     $permission_stmt->bindParam(':task_id', $task_id);
     $permission_stmt->bindParam(':user_id', $_SESSION['user_id']);
     $permission_stmt->execute();
-    
+
     if ($permission_stmt->rowCount() == 0 && $task['created_by'] != $_SESSION['user_id']) {
         header("Location: unauthorized.php");
         exit;
@@ -51,10 +51,10 @@ if ($_SESSION['user_role'] == 'developer') {
 // Handle comment submission
 if ($_POST && isset($_POST['add_comment'])) {
     $comment = $_POST['comment'];
-    
+
     try {
         $db->beginTransaction();
-        
+
         $query = "INSERT INTO comments (entity_type, entity_id, user_id, comment) 
                   VALUES ('task', :task_id, :user_id, :comment)";
         $stmt = $db->prepare($query);
@@ -62,23 +62,23 @@ if ($_POST && isset($_POST['add_comment'])) {
         $stmt->bindParam(':user_id', $_SESSION['user_id']);
         $stmt->bindParam(':comment', $comment);
         $stmt->execute();
-        
+
         $comment_id = $db->lastInsertId();
-        
+
         // Handle file uploads for comment
         if (!empty($_FILES['attachments']['name'][0])) {
             $upload_dir = 'uploads/tasks/' . $task_id . '/comments/';
             if (!is_dir($upload_dir)) {
                 mkdir($upload_dir, 0777, true);
             }
-            
+
             foreach ($_FILES['attachments']['tmp_name'] as $key => $tmp_name) {
                 if ($_FILES['attachments']['error'][$key] === UPLOAD_ERR_OK) {
                     $original_name = $_FILES['attachments']['name'][$key];
                     $file_extension = pathinfo($original_name, PATHINFO_EXTENSION);
                     $filename = 'comment_' . $comment_id . '_' . uniqid() . '.' . $file_extension;
                     $target_file = $upload_dir . $filename;
-                    
+
                     if (move_uploaded_file($tmp_name, $target_file)) {
                         $query = "INSERT INTO attachments (entity_type, entity_id, filename, original_name, file_path, file_size, file_type, uploaded_by) 
                                   VALUES ('comment', :entity_id, :filename, :original_name, :file_path, :file_size, :file_type, :uploaded_by)";
@@ -95,7 +95,7 @@ if ($_POST && isset($_POST['add_comment'])) {
                 }
             }
         }
-        
+
         $db->commit();
         $success = "Comment added successfully!";
     } catch (Exception $e) {
@@ -107,12 +107,12 @@ if ($_POST && isset($_POST['add_comment'])) {
 // Handle status update
 if ($_POST && isset($_POST['update_status'])) {
     $status = $_POST['status'];
-    
+
     $query = "UPDATE tasks SET status = :status, updated_at = NOW() WHERE id = :task_id";
     $stmt = $db->prepare($query);
     $stmt->bindParam(':status', $status);
     $stmt->bindParam(':task_id', $task_id);
-    
+
     if ($stmt->execute()) {
         $success = "Task status updated successfully!";
         // Refresh task data
@@ -143,7 +143,7 @@ $comment_attachments = [];
 if (!empty($comments)) {
     $comment_ids = array_column($comments, 'id');
     $placeholders = str_repeat('?,', count($comment_ids) - 1) . '?';
-    
+
     $attachments_query = "
         SELECT a.* 
         FROM attachments a 
@@ -153,7 +153,7 @@ if (!empty($comments)) {
     $attachments_stmt = $db->prepare($attachments_query);
     $attachments_stmt->execute($comment_ids);
     $attachments = $attachments_stmt->fetchAll(PDO::FETCH_ASSOC);
-    
+
     // Group attachments by comment_id
     foreach ($attachments as $attachment) {
         $comment_attachments[$attachment['entity_id']][] = $attachment;
@@ -191,6 +191,7 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
 ?>
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -207,19 +208,23 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
             border-radius: 10px;
             margin-bottom: 2rem;
         }
+
         .comment-avatar {
             width: 40px;
             height: 40px;
             border-radius: 50%;
         }
+
         .bug-card {
             border-left: 4px solid #dc3545;
         }
+
         .attachment-preview {
             max-width: 200px;
             max-height: 150px;
             object-fit: cover;
         }
+
         .attachment-item {
             border: 1px solid #dee2e6;
             border-radius: 5px;
@@ -227,32 +232,36 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
             margin: 2px;
             background: #f8f9fa;
         }
+
         .assignee-avatar {
             width: 28px;
             height: 28px;
             border-radius: 50%;
             object-fit: cover;
             border: 2px solid #fff;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
             cursor: pointer;
             transition: all 0.2s ease;
         }
+
         .assignee-avatar:hover {
             border-color: #007bff;
             transform: scale(1.2);
             z-index: 10;
             position: relative;
         }
+
         .assignees-container {
             display: flex;
             flex-wrap: wrap;
             gap: 5px;
-            margin-top: 5px;
         }
+
         .assignee-tooltip {
             position: relative;
             display: inline-block;
         }
+
         .assignee-tooltip .tooltip-text {
             visibility: hidden;
             width: 100px;
@@ -271,10 +280,12 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
             font-size: 11px;
             white-space: nowrap;
         }
+
         .assignee-tooltip:hover .tooltip-text {
             visibility: visible;
             opacity: 1;
         }
+
         .assignee-tooltip .tooltip-text::after {
             content: "";
             position: absolute;
@@ -285,15 +296,17 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
             border-style: solid;
             border-color: #333 transparent transparent transparent;
         }
+
         .form-select option img {
             vertical-align: middle;
             margin-right: 8px;
         }
     </style>
 </head>
+
 <body>
     <?php include 'includes/header.php'; ?>
-    
+
     <div class="container-fluid mt-4">
         <div class="row">
             <div class="col-12">
@@ -309,11 +322,9 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
                                 Project: <?= htmlspecialchars($task['project_name']) ?>
                             </span>
                             <br>
-                            <span class="badge bg-<?= 
-                                $task['priority'] == 'critical' ? 'danger' : 
-                                ($task['priority'] == 'high' ? 'warning' : 
-                                ($task['priority'] == 'medium' ? 'info' : 'success')) 
-                            ?> fs-6 mt-2">
+                            <span class="badge bg-<?=
+                                                    $task['priority'] == 'critical' ? 'danger' : ($task['priority'] == 'high' ? 'warning' : ($task['priority'] == 'medium' ? 'info' : 'success'))
+                                                    ?> fs-6 mt-2">
                                 <?= ucfirst($task['priority']) ?> Priority
                             </span>
                         </div>
@@ -323,7 +334,7 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
                 <?php if (isset($success)): ?>
                     <div class="alert alert-success"><?= $success ?></div>
                 <?php endif; ?>
-                
+
                 <?php if (isset($error)): ?>
                     <div class="alert alert-danger"><?= $error ?></div>
                 <?php endif; ?>
@@ -339,67 +350,77 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
                             <div class="card-body">
                                 <div class="row">
                                     <div class="col-md-6">
-                                        <p><strong>Status:</strong> 
+                                        <p><strong>Status:</strong>
                                             <span class="badge bg-secondary">
                                                 <?= ucfirst(str_replace('_', ' ', $task['status'])) ?>
                                             </span>
                                         </p>
-                                        <p><strong>Priority:</strong> 
-                                            <span class="badge bg-<?= 
-                                                $task['priority'] == 'critical' ? 'danger' : 
-                                                ($task['priority'] == 'high' ? 'warning' : 
-                                                ($task['priority'] == 'medium' ? 'info' : 'success')) 
-                                            ?>">
+                                        <p><strong>Priority:</strong>
+                                            <span class="badge bg-<?=
+                                                                    $task['priority'] == 'critical' ? 'danger' : ($task['priority'] == 'high' ? 'warning' : ($task['priority'] == 'medium' ? 'info' : 'success'))
+                                                                    ?>">
                                                 <?= ucfirst($task['priority']) ?>
                                             </span>
                                         </p>
-                                        <p><strong>Start Date:</strong> 
+                                        <p><strong>Start Date:</strong>
                                             <?= $task['start_datetime'] ? date('F j, Y H:i', strtotime($task['start_datetime'])) : 'Not set' ?>
                                         </p>
                                     </div>
                                     <div class="col-md-6">
                                         <p><strong>Assignees:</strong></p>
                                         <div class="assignees-container">
-                                            <?php if (!empty($task['assignee_names'])): 
-                                                $assigneeIds = explode(',', $task['assignee_ids']);
-                                                $assigneeNames = explode(',', $task['assignee_names']);
-                                                $assigneeImages = !empty($task['assignee_images']) ? explode(',', $task['assignee_images']) : [];
-                                                
-                                                for ($i = 0; $i < count($assigneeIds); $i++):
-                                                    $assigneeId = $assigneeIds[$i] ?? '';
-                                                    $assigneeName = $assigneeNames[$i] ?? '';
-                                                    $assigneeImage = $assigneeImages[$i] ?? '';
-                                                    
-                                                    if (!empty($assigneeId)):
-                                                        $profilePic = !empty($assigneeImage) ? $assigneeImage : getDefaultProfilePicture(28);
-                                            ?>
+                                            <?php
+                                            $assigneeIds = explode(',', $task['assignee_ids']);
+                                            $assigneeNames = explode(',', $task['assignee_names']);
+                                            $assigneeImages = !empty($task['assignee_images']) ? explode(',', $task['assignee_images']) : [];
+
+                                            $assignees = [];
+                                            for ($i = 0; $i < count($assigneeIds); $i++) {
+                                                $assignees[] = [
+                                                    'id' => $assigneeIds[$i] ?? '',
+                                                    'name' => $assigneeNames[$i] ?? 'Unknown',
+                                                    'image' => $assigneeImages[$i] ?? ''
+                                                ];
+                                            }
+                                            $task['assignees'] = $assignees; ?>
+                                            <?php if (!empty($task['assignees'])): ?>
+                                                <?php foreach ($task['assignees'] as $assignee):
+                                                    $profilePic = getProfilePicture($assignee['image'], $assignee['name'], 28);
+                                                    $defaultPic = getDefaultProfilePicture(28);
+                                                ?>
+                                                    <div class="assignee-tooltip">
+                                                        <img src="<?= $profilePic ?>"
+                                                            class="assignee-avatar"
+                                                            alt="<?= htmlspecialchars($assignee['name']) ?>"
+                                                            title="<?= htmlspecialchars($assignee['name']) ?>"
+                                                            onerror="this.onerror=null; this.src='<?= $defaultPic ?>'">
+                                                        <span class="tooltip-text"><?= htmlspecialchars($assignee['name']) ?></span>
+                                                    </div>
+                                                <?php endforeach; ?>
+                                            <?php else: ?>
                                                 <div class="assignee-tooltip">
-                                                    <img src="<?= $profilePic ?>" 
-                                                         class="assignee-avatar" 
-                                                         alt="<?= htmlspecialchars($assigneeName) ?>"
-                                                         title="<?= htmlspecialchars($assigneeName) ?>"
-                                                         onerror="this.onerror=null; this.src='<?= getDefaultProfilePicture(28) ?>'">
-                                                    <span class="tooltip-text"><?= htmlspecialchars($assigneeName) ?></span>
+                                                    <img src="<?= getDefaultProfilePicture(28) ?>"
+                                                        class="assignee-avatar"
+                                                        alt="Unassigned"
+                                                        title="Unassigned">
+                                                    <span class="tooltip-text">Unassigned</span>
                                                 </div>
-                                            <?php 
-                                                    endif;
-                                                endfor;
-                                            else: ?>
-                                                <span class="text-muted">Not assigned</span>
                                             <?php endif; ?>
+
+
                                         </div>
                                         <p class="mt-2"><strong>Created By:</strong> <?= htmlspecialchars($task['created_by_name']) ?></p>
-                                        <p><strong>End Date:</strong> 
+                                        <p><strong>End Date:</strong>
                                             <?php if ($task['end_datetime']): ?>
-                                                <?php 
+                                                <?php
                                                 $end_date = strtotime($task['end_datetime']);
                                                 $now = time();
                                                 $updated_at = strtotime($task['updated_at']);
                                                 $status = $task['status'];
-                                                
+
                                                 $class = 'text-muted';
                                                 $message = '';
-                                                
+
                                                 if ($status == 'closed') {
                                                     // For closed tasks, check if it was closed after the due date
                                                     if ($updated_at > $end_date) {
@@ -430,63 +451,63 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
                                         </p>
                                     </div>
                                 </div>
-                                
+
                                 <!-- Status Update Form -->
                                 <?php if ($_SESSION['user_role'] == 'manager' || in_array($_SESSION['user_id'], explode(',', $task['assignee_ids']))): ?>
-                                <div class="mt-4">
-                                    <form method="POST" class="row g-3">
-                                        <div class="col-md-6">
-                                            <label class="form-label">Update Status</label>
-                                            <select name="status" class="form-select" required>
-                                                <option value="todo" <?= $task['status'] == 'todo' ? 'selected' : '' ?>>To Do</option>
-                                                <option value="reopened" <?= $task['status'] == 'reopened' ? 'selected' : '' ?>>Reopened</option>
-                                                <option value="in_progress" <?= $task['status'] == 'in_progress' ? 'selected' : '' ?>>In Progress</option>
-                                                <option value="await_release" <?= $task['status'] == 'await_release' ? 'selected' : '' ?>>Await Release</option>
-                                                <option value="in_review" <?= $task['status'] == 'in_review' ? 'selected' : '' ?>>In Review</option>
-                                                <option value="closed" <?= $task['status'] == 'closed' ? 'selected' : '' ?>>Closed</option>
-                                            </select>
-                                        </div>
-                                        <div class="col-md-6 d-flex align-items-end">
-                                            <button type="submit" name="update_status" class="btn btn-primary">Update Status</button>
-                                        </div>
-                                    </form>
-                                </div>
+                                    <div class="mt-4">
+                                        <form method="POST" class="row g-3">
+                                            <div class="col-md-6">
+                                                <label class="form-label">Update Status</label>
+                                                <select name="status" class="form-select" required>
+                                                    <option value="todo" <?= $task['status'] == 'todo' ? 'selected' : '' ?>>To Do</option>
+                                                    <option value="reopened" <?= $task['status'] == 'reopened' ? 'selected' : '' ?>>Reopened</option>
+                                                    <option value="in_progress" <?= $task['status'] == 'in_progress' ? 'selected' : '' ?>>In Progress</option>
+                                                    <option value="await_release" <?= $task['status'] == 'await_release' ? 'selected' : '' ?>>Await Release</option>
+                                                    <option value="in_review" <?= $task['status'] == 'in_review' ? 'selected' : '' ?>>In Review</option>
+                                                    <option value="closed" <?= $task['status'] == 'closed' ? 'selected' : '' ?>>Closed</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-6 d-flex align-items-end">
+                                                <button type="submit" name="update_status" class="btn btn-primary">Update Status</button>
+                                            </div>
+                                        </form>
+                                    </div>
                                 <?php endif; ?>
                             </div>
                         </div>
 
                         <!-- Task Attachments -->
                         <?php if (!empty($task_attachments)): ?>
-                        <div class="card mb-4">
-                            <div class="card-header">
-                                <h5 class="mb-0">Task Attachments</h5>
-                            </div>
-                            <div class="card-body">
-                                <div class="row">
-                                    <?php foreach ($task_attachments as $attachment): ?>
-                                    <div class="col-md-6 mb-3">
-                                        <div class="attachment-item">
-                                            <div class="d-flex justify-content-between align-items-start">
-                                                <div>
-                                                    <h6 class="mb-1">
-                                                        <i class="fas fa-paperclip"></i>
-                                                        <?= htmlspecialchars($attachment['original_name']) ?>
-                                                    </h6>
-                                                    <small class="text-muted">
-                                                        <?= round($attachment['file_size'] / 1024, 1) ?> KB • 
-                                                        <?= $attachment['uploaded_by_name'] ?>
-                                                    </small>
+                            <div class="card mb-4">
+                                <div class="card-header">
+                                    <h5 class="mb-0">Task Attachments</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row">
+                                        <?php foreach ($task_attachments as $attachment): ?>
+                                            <div class="col-md-6 mb-3">
+                                                <div class="attachment-item">
+                                                    <div class="d-flex justify-content-between align-items-start">
+                                                        <div>
+                                                            <h6 class="mb-1">
+                                                                <i class="fas fa-paperclip"></i>
+                                                                <?= htmlspecialchars($attachment['original_name']) ?>
+                                                            </h6>
+                                                            <small class="text-muted">
+                                                                <?= round($attachment['file_size'] / 1024, 1) ?> KB •
+                                                                <?= $attachment['uploaded_by_name'] ?>
+                                                            </small>
+                                                        </div>
+                                                        <a href="download.php?id=<?= $attachment['id'] ?>" class="btn btn-sm btn-outline-primary">
+                                                            <i class="fas fa-download"></i>
+                                                        </a>
+                                                    </div>
                                                 </div>
-                                                <a href="download.php?id=<?= $attachment['id'] ?>" class="btn btn-sm btn-outline-primary">
-                                                    <i class="fas fa-download"></i>
-                                                </a>
                                             </div>
-                                        </div>
+                                        <?php endforeach; ?>
                                     </div>
-                                    <?php endforeach; ?>
                                 </div>
                             </div>
-                        </div>
                         <?php endif; ?>
 
                         <!-- Comments Section -->
@@ -515,36 +536,36 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
                                         <p class="text-muted text-center">No comments yet.</p>
                                     <?php else: ?>
                                         <?php foreach ($comments as $comment): ?>
-                                        <div class="d-flex mb-3">
-                                            <img src="<?= $comment['user_image'] ?: getDefaultProfilePicture(40) ?>" 
-                                                 class="comment-avatar me-3" alt="<?= htmlspecialchars($comment['user_name']) ?>"
-                                                 onerror="this.onerror=null; this.src='<?= getDefaultProfilePicture(40) ?>'">
-                                            <div class="flex-grow-1">
-                                                <div class="d-flex justify-content-between align-items-start">
-                                                    <h6 class="mb-1"><?= htmlspecialchars($comment['user_name']) ?></h6>
-                                                    <small class="text-muted"><?= date('M j, Y H:i', strtotime($comment['created_at'])) ?></small>
-                                                </div>
-                                                <div class="mb-1"><?= $comment['comment'] ?></div>
-                                                
-                                                <!-- Display attachments for this comment -->
-                                                <?php if (isset($comment_attachments[$comment['id']])): ?>
-                                                <div class="mt-2">
-                                                    <small class="text-muted">Attachments:</small>
-                                                    <div class="d-flex flex-wrap gap-2 mt-1">
-                                                        <?php foreach ($comment_attachments[$comment['id']] as $attachment): ?>
-                                                        <div class="attachment-item">
-                                                            <a href="download.php?id=<?= $attachment['id'] ?>" target="_blank" class="btn btn-sm btn-outline-secondary">
-                                                                <i class="fas fa-paperclip"></i> 
-                                                                <?= htmlspecialchars($attachment['original_name']) ?>
-                                                                <small>(<?= round($attachment['file_size'] / 1024, 1) ?> KB)</small>
-                                                            </a>
-                                                        </div>
-                                                        <?php endforeach; ?>
+                                            <div class="d-flex mb-3">
+                                                <img src="<?= $comment['user_image'] ?: getDefaultProfilePicture(40) ?>"
+                                                    class="comment-avatar me-3" alt="<?= htmlspecialchars($comment['user_name']) ?>"
+                                                    onerror="this.onerror=null; this.src='<?= getDefaultProfilePicture(40) ?>'">
+                                                <div class="flex-grow-1">
+                                                    <div class="d-flex justify-content-between align-items-start">
+                                                        <h6 class="mb-1"><?= htmlspecialchars($comment['user_name']) ?></h6>
+                                                        <small class="text-muted"><?= date('M j, Y H:i', strtotime($comment['created_at'])) ?></small>
                                                     </div>
+                                                    <div class="mb-1"><?= $comment['comment'] ?></div>
+
+                                                    <!-- Display attachments for this comment -->
+                                                    <?php if (isset($comment_attachments[$comment['id']])): ?>
+                                                        <div class="mt-2">
+                                                            <small class="text-muted">Attachments:</small>
+                                                            <div class="d-flex flex-wrap gap-2 mt-1">
+                                                                <?php foreach ($comment_attachments[$comment['id']] as $attachment): ?>
+                                                                    <div class="attachment-item">
+                                                                        <a href="download.php?id=<?= $attachment['id'] ?>" target="_blank" class="btn btn-sm btn-outline-secondary">
+                                                                            <i class="fas fa-paperclip"></i>
+                                                                            <?= htmlspecialchars($attachment['original_name']) ?>
+                                                                            <small>(<?= round($attachment['file_size'] / 1024, 1) ?> KB)</small>
+                                                                        </a>
+                                                                    </div>
+                                                                <?php endforeach; ?>
+                                                            </div>
+                                                        </div>
+                                                    <?php endif; ?>
                                                 </div>
-                                                <?php endif; ?>
                                             </div>
-                                        </div>
                                         <?php endforeach; ?>
                                     <?php endif; ?>
                                 </div>
@@ -565,38 +586,34 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
                                     <p class="text-muted">No bugs reported for this task.</p>
                                 <?php else: ?>
                                     <?php foreach ($bugs as $bug): ?>
-                                    <div class="card bug-card mb-2">
-                                        <div class="card-body py-2">
-                                            <h6 class="card-title mb-1"><?= htmlspecialchars($bug['name']) ?></h6>
-                                            <p class="card-text small mb-1"><?= substr(strip_tags($bug['description']), 0, 50) ?>...</p>
-                                            <div class="d-flex justify-content-between align-items-center">
-                                                <span class="badge bg-<?= 
-                                                    $bug['priority'] == 'critical' ? 'danger' : 
-                                                    ($bug['priority'] == 'high' ? 'warning' : 
-                                                    ($bug['priority'] == 'medium' ? 'info' : 'success')) 
-                                                ?>">
-                                                    <?= ucfirst($bug['priority']) ?>
-                                                </span>
-                                                <span class="badge bg-<?= 
-                                                    $bug['status'] == 'open' ? 'danger' : 
-                                                    ($bug['status'] == 'in_progress' ? 'warning' : 
-                                                    ($bug['status'] == 'resolved' ? 'info' : 'success')) 
-                                                ?>">
-                                                    <?= ucfirst($bug['status']) ?>
-                                                </span>
+                                        <div class="card bug-card mb-2">
+                                            <div class="card-body py-2">
+                                                <h6 class="card-title mb-1"><?= htmlspecialchars($bug['name']) ?></h6>
+                                                <p class="card-text small mb-1"><?= substr(strip_tags($bug['description']), 0, 50) ?>...</p>
+                                                <div class="d-flex justify-content-between align-items-center">
+                                                    <span class="badge bg-<?=
+                                                                            $bug['priority'] == 'critical' ? 'danger' : ($bug['priority'] == 'high' ? 'warning' : ($bug['priority'] == 'medium' ? 'info' : 'success'))
+                                                                            ?>">
+                                                        <?= ucfirst($bug['priority']) ?>
+                                                    </span>
+                                                    <span class="badge bg-<?=
+                                                                            $bug['status'] == 'open' ? 'danger' : ($bug['status'] == 'in_progress' ? 'warning' : ($bug['status'] == 'resolved' ? 'info' : 'success'))
+                                                                            ?>">
+                                                        <?= ucfirst($bug['status']) ?>
+                                                    </span>
+                                                </div>
+                                                <a href="bug_details.php?id=<?= $bug['id'] ?>" class="stretched-link"></a>
                                             </div>
-                                            <a href="bug_details.php?id=<?= $bug['id'] ?>" class="stretched-link"></a>
                                         </div>
-                                    </div>
                                     <?php endforeach; ?>
                                 <?php endif; ?>
-                                
+
                                 <?php if ($_SESSION['user_role'] == 'manager' || $_SESSION['user_role'] == 'qa'): ?>
-                                <div class="mt-3">
-                                    <a href="bugs.php" class="btn btn-outline-primary btn-sm w-100">
-                                        <i class="fas fa-bug"></i> Report New Bug
-                                    </a>
-                                </div>
+                                    <div class="mt-3">
+                                        <a href="bugs.php" class="btn btn-outline-primary btn-sm w-100">
+                                            <i class="fas fa-bug"></i> Report New Bug
+                                        </a>
+                                    </div>
                                 <?php endif; ?>
                             </div>
                         </div>
@@ -612,9 +629,9 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
                                         <i class="fas fa-project-diagram"></i> View Project
                                     </a>
                                     <?php if ($_SESSION['user_role'] == 'manager'): ?>
-                                    <button class="btn btn-outline-warning" data-bs-toggle="modal" data-bs-target="#assignDevelopersModal">
-                                        <i class="fas fa-users"></i> Assign Developers
-                                    </button>
+                                        <button class="btn btn-outline-warning" data-bs-toggle="modal" data-bs-target="#assignDevelopersModal">
+                                            <i class="fas fa-users"></i> Assign Developers
+                                        </button>
                                     <?php endif; ?>
                                     <a href="tasks.php" class="btn btn-outline-secondary">
                                         <i class="fas fa-arrow-left"></i> Back to Tasks
@@ -630,60 +647,60 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
 
     <!-- Assign Developers Modal -->
     <?php if ($_SESSION['user_role'] == 'manager'): ?>
-    <div class="modal fade" id="assignDevelopersModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Assign Developers</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <form method="POST" action="update_task_assignments.php">
-                    <input type="hidden" name="task_id" value="<?= $task_id ?>">
-                    <div class="modal-body">
-                        <div class="mb-3">
-                            <label class="form-label">Select Developers</label>
-                            <select class="form-select" name="assignees[]" multiple size="8" style="font-size: 14px;">
-                                <?php 
-                                $current_assignees = explode(',', $task['assignee_ids']);
-                                foreach ($developers as $dev): 
-                                ?>
-                                    <option value="<?= $dev['id'] ?>" 
-                                        <?= in_array($dev['id'], $current_assignees) ? 'selected' : '' ?>
-                                        style="padding: 8px;">
-                                        <img src="<?= $dev['image'] ?: getDefaultProfilePicture(20) ?>" 
-                                             class="rounded-circle me-2" width="20" height="20"
-                                             onerror="this.onerror=null; this.src='<?= getDefaultProfilePicture(20) ?>'"
-                                             style="vertical-align: middle;">
-                                        <?= htmlspecialchars($dev['name']) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                            <small class="text-muted">Hold Ctrl to select multiple developers</small>
+        <div class="modal fade" id="assignDevelopersModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Assign Developers</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <form method="POST" action="update_task_assignments.php">
+                        <input type="hidden" name="task_id" value="<?= $task_id ?>">
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label class="form-label">Select Developers</label>
+                                <select class="form-select" name="assignees[]" multiple size="8" style="font-size: 14px;">
+                                    <?php
+                                    $current_assignees = explode(',', $task['assignee_ids']);
+                                    foreach ($developers as $dev):
+                                    ?>
+                                        <option value="<?= $dev['id'] ?>"
+                                            <?= in_array($dev['id'], $current_assignees) ? 'selected' : '' ?>
+                                            style="padding: 8px;">
+                                            <img src="<?= $dev['image'] ?: getDefaultProfilePicture(20) ?>"
+                                                class="rounded-circle me-2" width="20" height="20"
+                                                onerror="this.onerror=null; this.src='<?= getDefaultProfilePicture(20) ?>'"
+                                                style="vertical-align: middle;">
+                                            <?= htmlspecialchars($dev['name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <small class="text-muted">Hold Ctrl to select multiple developers</small>
+                            </div>
                         </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                        <button type="submit" class="btn btn-primary">Update Assignments</button>
-                    </div>
-                </form>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                            <button type="submit" class="btn btn-primary">Update Assignments</button>
+                        </div>
+                    </form>
+                </div>
             </div>
         </div>
-    </div>
     <?php endif; ?>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        tinymce.init({
-            selector: 'textarea.wysiwyg',
-            plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
-            toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
-            menubar: false,
-            height: 300,
-            promotion: false,
-            branding: false
+        document.addEventListener('DOMContentLoaded', function() {
+            tinymce.init({
+                selector: 'textarea.wysiwyg',
+                plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
+                toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
+                menubar: false,
+                height: 300,
+                promotion: false,
+                branding: false
+            });
         });
-    });
     </script>
 </body>
 <footer class="bg-dark text-light text-center py-3 mt-5">
@@ -691,4 +708,5 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
         <p class="mb-0">Developed by APNLAB. 2025.</p>
     </div>
 </footer>
+
 </html>
