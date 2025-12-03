@@ -497,7 +497,7 @@ $projects = $db->query("
 
     <!-- Create Project Modal -->
     <div class="modal fade" id="createProjectModal" tabindex="-1">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">Create New Project</h5>
@@ -569,7 +569,7 @@ $projects = $db->query("
 
     <!-- Edit Project Modal -->
     <div class="modal fade" id="editProjectModal" tabindex="-1">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-lg">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">Edit Project</h5>

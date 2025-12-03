@@ -19,7 +19,7 @@ if ($_POST) {
     if (isset($_POST['create_task'])) {
         // Form validation
         $errors = [];
-
+        
         $name = trim($_POST['name'] ?? '');
         $description = trim($_POST['description'] ?? '');
         $project_id = $_POST['project_id'] ?? '';
@@ -27,44 +27,44 @@ if ($_POST) {
         $start_datetime = $_POST['start_datetime'] ?? '';
         $end_datetime = $_POST['end_datetime'] ?? '';
         $assignees = $_POST['assignees'] ?? [];
-
+        
         // Validate required fields
         if (empty($name)) {
             $errors[] = "Task name is required.";
         } elseif (strlen($name) > 255) {
             $errors[] = "Task name must be less than 255 characters.";
         }
-
+        
         if (empty($project_id)) {
             $errors[] = "Project selection is required.";
         }
-
+        
         if (empty($priority)) {
             $errors[] = "Priority selection is required.";
         }
-
+        
         // Validate date range
         if (!empty($start_datetime) && !empty($end_datetime)) {
             $start_timestamp = strtotime($start_datetime);
             $end_timestamp = strtotime($end_datetime);
-
+            
             if ($end_timestamp < $start_timestamp) {
                 $errors[] = "End date/time cannot be before start date/time.";
             }
         }
-
+        
         // Validate file uploads
         if (!empty($_FILES['attachments']['name'][0])) {
             $max_file_size = 10 * 1024 * 1024;
             $allowed_types = ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'txt', 'zip'];
-
+            
             foreach ($_FILES['attachments']['tmp_name'] as $key => $tmp_name) {
                 if ($_FILES['attachments']['error'][$key] === UPLOAD_ERR_OK) {
                     if ($_FILES['attachments']['size'][$key] > $max_file_size) {
                         $errors[] = "File '" . $_FILES['attachments']['name'][$key] . "' exceeds 10MB limit.";
                         continue;
                     }
-
+                    
                     $original_name = $_FILES['attachments']['name'][$key];
                     $file_extension = strtolower(pathinfo($original_name, PATHINFO_EXTENSION));
                     if (!in_array($file_extension, $allowed_types)) {
@@ -73,15 +73,15 @@ if ($_POST) {
                 }
             }
         }
-
+        
         if (empty($errors)) {
             try {
                 $db->beginTransaction();
-
+                
                 // Insert task
                 $query = "INSERT INTO tasks (name, description, project_id, priority, start_datetime, end_datetime, created_by, status) 
                           VALUES (:name, :description, :project_id, :priority, :start_datetime, :end_datetime, :created_by, 'todo')";
-
+                
                 $stmt = $db->prepare($query);
                 $stmt->bindParam(':name', $name);
                 $stmt->bindParam(':description', $description);
@@ -91,9 +91,9 @@ if ($_POST) {
                 $stmt->bindParam(':end_datetime', $end_datetime);
                 $stmt->bindParam(':created_by', $_SESSION['user_id']);
                 $stmt->execute();
-
+                
                 $task_id = $db->lastInsertId();
-
+                
                 // Assign developers
                 foreach ($assignees as $user_id) {
                     $assign_query = "INSERT INTO task_assignments (task_id, user_id) VALUES (:task_id, :user_id)";
@@ -102,21 +102,21 @@ if ($_POST) {
                     $assign_stmt->bindParam(':user_id', $user_id);
                     $assign_stmt->execute();
                 }
-
+                
                 // Handle file uploads
                 if (!empty($_FILES['attachments']['name'][0])) {
                     $upload_dir = 'uploads/tasks/' . $task_id . '/';
                     if (!is_dir($upload_dir)) {
                         mkdir($upload_dir, 0777, true);
                     }
-
+                    
                     foreach ($_FILES['attachments']['tmp_name'] as $key => $tmp_name) {
                         if ($_FILES['attachments']['error'][$key] === UPLOAD_ERR_OK) {
                             $original_name = $_FILES['attachments']['name'][$key];
                             $file_extension = pathinfo($original_name, PATHINFO_EXTENSION);
                             $filename = 'task_' . $task_id . '_' . uniqid() . '.' . $file_extension;
                             $target_file = $upload_dir . $filename;
-
+                            
                             if (move_uploaded_file($tmp_name, $target_file)) {
                                 $query = "INSERT INTO attachments (entity_type, entity_id, filename, original_name, file_path, file_size, file_type, uploaded_by, uploaded_on) 
                                           VALUES ('task', :entity_id, :filename, :original_name, :file_path, :file_size, :file_type, :uploaded_by, NOW())";
@@ -133,9 +133,9 @@ if ($_POST) {
                         }
                     }
                 }
-
+                
                 $db->commit();
-
+                
                 // Log task creation
                 $activityLogger->logActivity(
                     $current_user_id,
@@ -152,11 +152,11 @@ if ($_POST) {
                         'ip_address' => $_SERVER['REMOTE_ADDR']
                     ])
                 );
-
+                
                 // Send notifications
                 if (!empty($assignees)) {
                     $notification->createTaskAssignmentNotification($task_id, $assignees);
-
+                    
                     // Log notifications
                     $activityLogger->logActivity(
                         $current_user_id,
@@ -170,13 +170,14 @@ if ($_POST) {
                         ])
                     );
                 }
-
+                
                 $success = "Task created successfully!";
                 $_POST = [];
                 $_FILES = [];
+                
             } catch (Exception $e) {
                 $db->rollBack();
-
+                
                 // Log creation failure
                 $activityLogger->logActivity(
                     $current_user_id,
@@ -191,7 +192,7 @@ if ($_POST) {
                         'ip_address' => $_SERVER['REMOTE_ADDR']
                     ])
                 );
-
+                
                 $error = "Failed to create task: " . $e->getMessage();
             }
         } else {
@@ -212,11 +213,11 @@ if ($_POST) {
                     'ip_address' => $_SERVER['REMOTE_ADDR']
                 ])
             );
-
+            
             $error = implode("<br>", $errors);
         }
     }
-
+    
     if (isset($_POST['update_task'])) {
         $task_id = $_POST['task_id'];
         $name = trim($_POST['name'] ?? '');
@@ -226,38 +227,38 @@ if ($_POST) {
         $start_datetime = $_POST['start_datetime'] ?? '';
         $end_datetime = $_POST['end_datetime'] ?? '';
         $assignees = $_POST['assignees'] ?? [];
-
+        
         // Get old task data for logging
         $old_task_query = $db->prepare("SELECT * FROM tasks WHERE id = ?");
         $old_task_query->execute([$task_id]);
         $old_task = $old_task_query->fetch(PDO::FETCH_ASSOC);
-
+        
         $errors = [];
         if (empty($name)) {
             $errors[] = "Task name is required.";
         }
-
+        
         if (empty($project_id)) {
             $errors[] = "Project selection is required.";
         }
-
+        
         if (empty($priority)) {
             $errors[] = "Priority selection is required.";
         }
-
+        
         if (!empty($start_datetime) && !empty($end_datetime)) {
             $start_timestamp = strtotime($start_datetime);
             $end_timestamp = strtotime($end_datetime);
-
+            
             if ($end_timestamp < $start_timestamp) {
                 $errors[] = "End date/time cannot be before start date/time.";
             }
         }
-
+        
         if (empty($errors)) {
             try {
                 $db->beginTransaction();
-
+                
                 // Update task
                 $query = "UPDATE tasks SET 
                           name = :name, 
@@ -268,7 +269,7 @@ if ($_POST) {
                           end_datetime = :end_datetime,
                           updated_at = NOW()
                           WHERE id = :id";
-
+                
                 $stmt = $db->prepare($query);
                 $stmt->bindParam(':name', $name);
                 $stmt->bindParam(':description', $description);
@@ -278,13 +279,13 @@ if ($_POST) {
                 $stmt->bindParam(':end_datetime', $end_datetime);
                 $stmt->bindParam(':id', $task_id);
                 $stmt->execute();
-
+                
                 // Update assignees
                 $delete_query = "DELETE FROM task_assignments WHERE task_id = :task_id";
                 $delete_stmt = $db->prepare($delete_query);
                 $delete_stmt->bindParam(':task_id', $task_id);
                 $delete_stmt->execute();
-
+                
                 foreach ($assignees as $user_id) {
                     $assign_query = "INSERT INTO task_assignments (task_id, user_id) VALUES (:task_id, :user_id)";
                     $assign_stmt = $db->prepare($assign_query);
@@ -292,21 +293,21 @@ if ($_POST) {
                     $assign_stmt->bindParam(':user_id', $user_id);
                     $assign_stmt->execute();
                 }
-
+                
                 // Handle new file uploads
                 if (!empty($_FILES['new_attachments']['name'][0])) {
                     $upload_dir = 'uploads/tasks/' . $task_id . '/';
                     if (!is_dir($upload_dir)) {
                         mkdir($upload_dir, 0777, true);
                     }
-
+                    
                     foreach ($_FILES['new_attachments']['tmp_name'] as $key => $tmp_name) {
                         if ($_FILES['new_attachments']['error'][$key] === UPLOAD_ERR_OK) {
                             $original_name = $_FILES['new_attachments']['name'][$key];
                             $file_extension = pathinfo($original_name, PATHINFO_EXTENSION);
                             $filename = 'task_' . $task_id . '_' . uniqid() . '.' . $file_extension;
                             $target_file = $upload_dir . $filename;
-
+                            
                             if (move_uploaded_file($tmp_name, $target_file)) {
                                 $query = "INSERT INTO attachments (entity_type, entity_id, filename, original_name, file_path, file_size, file_type, uploaded_by, uploaded_on) 
                                           VALUES ('task', :entity_id, :filename, :original_name, :file_path, :file_size, :file_type, :uploaded_by, NOW())";
@@ -323,9 +324,9 @@ if ($_POST) {
                         }
                     }
                 }
-
+                
                 $db->commit();
-
+                
                 // Log task update
                 $activityLogger->logActivity(
                     $current_user_id,
@@ -353,20 +354,21 @@ if ($_POST) {
                         'ip_address' => $_SERVER['REMOTE_ADDR']
                     ])
                 );
-
+                
                 // Send update notifications
                 if (!empty($assignees)) {
                     $notification->createTaskUpdateNotification($task_id, $assignees);
                 }
-
+                
                 $success = "Task updated successfully!";
-
+                
                 // Redirect to remove edit_task parameter from URL after successful update
                 header("Location: tasks.php");
                 exit;
+                
             } catch (Exception $e) {
                 $db->rollBack();
-
+                
                 // Log update failure
                 $activityLogger->logActivity(
                     $current_user_id,
@@ -380,44 +382,44 @@ if ($_POST) {
                         'ip_address' => $_SERVER['REMOTE_ADDR']
                     ])
                 );
-
+                
                 $error = "Failed to update task: " . $e->getMessage();
             }
         } else {
             $error = implode("<br>", $errors);
         }
     }
-
+    
     if (isset($_POST['update_task_status'])) {
         $task_id = $_POST['task_id'];
         $status = $_POST['status'];
-
+        
         try {
             $db->beginTransaction();
-
+            
             // Get task details
             $task_query = "SELECT * FROM tasks WHERE id = :task_id";
             $task_stmt = $db->prepare($task_query);
             $task_stmt->bindParam(':task_id', $task_id);
             $task_stmt->execute();
             $task = $task_stmt->fetch(PDO::FETCH_ASSOC);
-
+            
             // Get assigned users
             $assignees_query = "SELECT user_id FROM task_assignments WHERE task_id = :task_id";
             $assignees_stmt = $db->prepare($assignees_query);
             $assignees_stmt->bindParam(':task_id', $task_id);
             $assignees_stmt->execute();
             $assignees = $assignees_stmt->fetchAll(PDO::FETCH_COLUMN);
-
+            
             // Update task status
             $query = "UPDATE tasks SET status = :status, updated_at = NOW() WHERE id = :id";
             $stmt = $db->prepare($query);
             $stmt->bindParam(':status', $status);
             $stmt->bindParam(':id', $task_id);
-
+            
             if ($stmt->execute()) {
                 $db->commit();
-
+                
                 // Log status update
                 $activityLogger->logActivity(
                     $current_user_id,
@@ -433,12 +435,12 @@ if ($_POST) {
                         'ip_address' => $_SERVER['REMOTE_ADDR']
                     ])
                 );
-
+                
                 // Send notifications
                 $notification->createTaskStatusUpdateNotification($task_id, $status, $assignees, $task['created_by']);
-
+                
                 $success = "Task status updated successfully!";
-
+                
                 // Redirect to remove any query parameters
                 header("Location: tasks.php");
                 exit;
@@ -447,7 +449,7 @@ if ($_POST) {
             }
         } catch (Exception $e) {
             $db->rollBack();
-
+            
             // Log status update failure
             $activityLogger->logActivity(
                 $current_user_id,
@@ -462,15 +464,15 @@ if ($_POST) {
                     'ip_address' => $_SERVER['REMOTE_ADDR']
                 ])
             );
-
+            
             $error = "Failed to update task status: " . $e->getMessage();
         }
     }
-
+    
     if (isset($_POST['delete_attachment'])) {
         $attachment_id = $_POST['attachment_id'];
         $task_id = $_POST['task_id'];
-
+        
         try {
             // Get attachment details
             $attachment_query = "SELECT * FROM attachments WHERE id = :id AND entity_type = 'task'";
@@ -478,19 +480,19 @@ if ($_POST) {
             $attachment_stmt->bindParam(':id', $attachment_id);
             $attachment_stmt->execute();
             $attachment = $attachment_stmt->fetch(PDO::FETCH_ASSOC);
-
+            
             if ($attachment) {
                 // Delete file from server
                 if (file_exists($attachment['file_path'])) {
                     unlink($attachment['file_path']);
                 }
-
+                
                 // Delete record from database
                 $delete_query = "DELETE FROM attachments WHERE id = :id";
                 $delete_stmt = $db->prepare($delete_query);
                 $delete_stmt->bindParam(':id', $attachment_id);
                 $delete_stmt->execute();
-
+                
                 // Log attachment deletion
                 $activityLogger->logActivity(
                     $current_user_id,
@@ -505,9 +507,9 @@ if ($_POST) {
                         'ip_address' => $_SERVER['REMOTE_ADDR']
                     ])
                 );
-
+                
                 $success = "Attachment deleted successfully!";
-
+                
                 // Redirect to remove edit_task parameter
                 header("Location: tasks.php?edit_task=" . $task_id);
                 exit;
@@ -563,16 +565,16 @@ if ($_SESSION['user_role'] == 'manager') {
         LEFT JOIN bugs b ON t.id = b.task_id
         LEFT JOIN attachments a ON a.entity_type = 'task' AND a.entity_id = t.id
     ";
-
+    
     if (!empty($filter_conditions)) {
         $tasks_query .= " WHERE " . implode(" AND ", $filter_conditions);
     }
-
+    
     $tasks_query .= " GROUP BY t.id ORDER BY t.created_at DESC";
 } else {
     $filter_conditions[] = "ta.user_id = :user_id";
     $filter_params[':user_id'] = $_SESSION['user_id'];
-
+    
     $tasks_query = "
         SELECT t.*, p.name as project_name, 
                GROUP_CONCAT(DISTINCT u.name) as assignee_names,
@@ -586,11 +588,11 @@ if ($_SESSION['user_role'] == 'manager') {
         LEFT JOIN bugs b ON t.id = b.task_id
         LEFT JOIN attachments a ON a.entity_type = 'task' AND a.entity_id = t.id
     ";
-
+    
     if (!empty($filter_conditions)) {
         $tasks_query .= " WHERE " . implode(" AND ", $filter_conditions);
     }
-
+    
     $tasks_query .= " GROUP BY t.id ORDER BY t.created_at DESC";
 }
 
@@ -623,7 +625,7 @@ $edit_task = null;
 $task_attachments = [];
 if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load if we just submitted an update
     $task_id = $_GET['edit_task'];
-
+    
     $task_query = "SELECT t.*, p.name as project_name FROM tasks t 
                    LEFT JOIN projects p ON t.project_id = p.id 
                    WHERE t.id = :id";
@@ -631,7 +633,7 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
     $task_stmt->bindParam(':id', $task_id);
     $task_stmt->execute();
     $edit_task = $task_stmt->fetch(PDO::FETCH_ASSOC);
-
+    
     if ($edit_task) {
         // Get assigned developers
         $assignees_query = "SELECT user_id FROM task_assignments WHERE task_id = :task_id";
@@ -639,7 +641,7 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
         $assignees_stmt->bindParam(':task_id', $task_id);
         $assignees_stmt->execute();
         $edit_task['assignees'] = $assignees_stmt->fetchAll(PDO::FETCH_COLUMN);
-
+        
         // Get attachments
         $attachments_query = "SELECT * FROM attachments WHERE entity_type = 'task' AND entity_id = :task_id ORDER BY created_at DESC";
         $attachments_stmt = $db->prepare($attachments_query);
@@ -651,7 +653,6 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
 ?>
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -666,12 +667,10 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
             padding: 20px;
             margin-bottom: 20px;
         }
-
         .form-label.required:after {
             content: " *";
             color: #dc3545;
         }
-
         .attachment-item {
             padding: 8px;
             border: 1px solid #dee2e6;
@@ -679,20 +678,16 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
             margin-bottom: 8px;
             background: #f8f9fa;
         }
-
         .task-table tr {
             cursor: pointer;
         }
-
         .task-table tr:hover {
             background-color: #f5f5f5;
         }
-
         .activity-log {
             max-height: 400px;
             overflow-y: auto;
         }
-
         .activity-item {
             border-left: 4px solid;
             margin-bottom: 8px;
@@ -700,197 +695,177 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
             background-color: #f8f9fa;
             font-size: 0.9rem;
         }
-
-        .activity-create {
-            border-color: #28a745;
-        }
-
-        .activity-update {
-            border-color: #007bff;
-        }
-
-        .activity-update_status {
-            border-color: #6f42c1;
-        }
-
-        .activity-delete_attachment {
-            border-color: #dc3545;
-        }
-
-        .activity-failed {
-            border-color: #fd7e14;
-        }
-
+        .activity-create { border-color: #28a745; }
+        .activity-update { border-color: #007bff; }
+        .activity-update_status { border-color: #6f42c1; }
+        .activity-delete_attachment { border-color: #dc3545; }
+        .activity-failed { border-color: #fd7e14; }
         .activity-item small {
             font-size: 0.8rem;
             color: #6c757d;
         }
     </style>
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            tinymce.init({
-                selector: 'textarea.wysiwyg',
-                plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
-                toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
-                menubar: false,
-                height: 300,
-                promotion: false,
-                branding: false
+    document.addEventListener('DOMContentLoaded', function() {
+        tinymce.init({
+            selector: 'textarea.wysiwyg',
+            plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
+            toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
+            menubar: false,
+            height: 300,
+            promotion: false,
+            branding: false
+        });
+        
+        // Form validation
+        const createTaskForm = document.querySelector('form[method="POST"]');
+        if (createTaskForm && createTaskForm.querySelector('button[name="create_task"]')) {
+            createTaskForm.addEventListener('submit', function(e) {
+                let isValid = true;
+                const errorMessages = [];
+                
+                const taskName = this.querySelector('input[name="name"]');
+                if (!taskName.value.trim()) {
+                    isValid = false;
+                    errorMessages.push("Task name is required.");
+                    taskName.classList.add('is-invalid');
+                } else if (taskName.value.trim().length > 255) {
+                    isValid = false;
+                    errorMessages.push("Task name must be less than 255 characters.");
+                    taskName.classList.add('is-invalid');
+                } else {
+                    taskName.classList.remove('is-invalid');
+                }
+                
+                const projectSelect = this.querySelector('select[name="project_id"]');
+                if (!projectSelect.value) {
+                    isValid = false;
+                    errorMessages.push("Project selection is required.");
+                    projectSelect.classList.add('is-invalid');
+                } else {
+                    projectSelect.classList.remove('is-invalid');
+                }
+                
+                const prioritySelect = this.querySelector('select[name="priority"]');
+                if (!prioritySelect.value) {
+                    isValid = false;
+                    errorMessages.push("Priority selection is required.");
+                    prioritySelect.classList.add('is-invalid');
+                } else {
+                    prioritySelect.classList.remove('is-invalid');
+                }
+                
+                const startDate = this.querySelector('input[name="start_datetime"]');
+                const endDate = this.querySelector('input[name="end_datetime"]');
+                
+                if (startDate.value && endDate.value) {
+                    const start = new Date(startDate.value);
+                    const end = new Date(endDate.value);
+                    
+                    if (end < start) {
+                        isValid = false;
+                        errorMessages.push("End date/time cannot be before start date/time.");
+                        startDate.classList.add('is-invalid');
+                        endDate.classList.add('is-invalid');
+                    } else {
+                        startDate.classList.remove('is-invalid');
+                        endDate.classList.remove('is-invalid');
+                    }
+                }
+                
+                if (!isValid) {
+                    e.preventDefault();
+                    
+                    let alertDiv = document.querySelector('.validation-error-alert');
+                    if (!alertDiv) {
+                        alertDiv = document.createElement('div');
+                        alertDiv.className = 'alert alert-danger validation-error-alert mt-3';
+                        this.prepend(alertDiv);
+                    }
+                    
+                    alertDiv.innerHTML = '<strong>Please fix the following errors:</strong><br>' + 
+                                        errorMessages.map(msg => `• ${msg}`).join('<br>');
+                    
+                    alertDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
             });
-
-            // Form validation
-            const createTaskForm = document.querySelector('form[method="POST"]');
-            if (createTaskForm && createTaskForm.querySelector('button[name="create_task"]')) {
-                createTaskForm.addEventListener('submit', function(e) {
-                    let isValid = true;
-                    const errorMessages = [];
-
-                    const taskName = this.querySelector('input[name="name"]');
-                    if (!taskName.value.trim()) {
-                        isValid = false;
-                        errorMessages.push("Task name is required.");
-                        taskName.classList.add('is-invalid');
-                    } else if (taskName.value.trim().length > 255) {
-                        isValid = false;
-                        errorMessages.push("Task name must be less than 255 characters.");
-                        taskName.classList.add('is-invalid');
-                    } else {
-                        taskName.classList.remove('is-invalid');
-                    }
-
-                    const projectSelect = this.querySelector('select[name="project_id"]');
-                    if (!projectSelect.value) {
-                        isValid = false;
-                        errorMessages.push("Project selection is required.");
-                        projectSelect.classList.add('is-invalid');
-                    } else {
-                        projectSelect.classList.remove('is-invalid');
-                    }
-
-                    const prioritySelect = this.querySelector('select[name="priority"]');
-                    if (!prioritySelect.value) {
-                        isValid = false;
-                        errorMessages.push("Priority selection is required.");
-                        prioritySelect.classList.add('is-invalid');
-                    } else {
-                        prioritySelect.classList.remove('is-invalid');
-                    }
-
-                    const startDate = this.querySelector('input[name="start_datetime"]');
-                    const endDate = this.querySelector('input[name="end_datetime"]');
-
-                    if (startDate.value && endDate.value) {
-                        const start = new Date(startDate.value);
-                        const end = new Date(endDate.value);
-
-                        if (end < start) {
-                            isValid = false;
-                            errorMessages.push("End date/time cannot be before start date/time.");
-                            startDate.classList.add('is-invalid');
-                            endDate.classList.add('is-invalid');
-                        } else {
-                            startDate.classList.remove('is-invalid');
-                            endDate.classList.remove('is-invalid');
-                        }
-                    }
-
-                    if (!isValid) {
-                        e.preventDefault();
-
-                        let alertDiv = document.querySelector('.validation-error-alert');
-                        if (!alertDiv) {
-                            alertDiv = document.createElement('div');
-                            alertDiv.className = 'alert alert-danger validation-error-alert mt-3';
-                            this.prepend(alertDiv);
-                        }
-
-                        alertDiv.innerHTML = '<strong>Please fix the following errors:</strong><br>' +
-                            errorMessages.map(msg => `• ${msg}`).join('<br>');
-
-                        alertDiv.scrollIntoView({
-                            behavior: 'smooth',
-                            block: 'center'
-                        });
-                    }
+        }
+        
+        // Filter form handling
+        const filterForm = document.getElementById('filterForm');
+        if (filterForm) {
+            const clearFiltersBtn = document.getElementById('clearFilters');
+            if (clearFiltersBtn) {
+                clearFiltersBtn.addEventListener('click', function() {
+                    filterForm.reset();
+                    filterForm.submit();
                 });
             }
-
-            // Filter form handling
-            const filterForm = document.getElementById('filterForm');
-            if (filterForm) {
-                const clearFiltersBtn = document.getElementById('clearFilters');
-                if (clearFiltersBtn) {
-                    clearFiltersBtn.addEventListener('click', function() {
-                        filterForm.reset();
-                        filterForm.submit();
+        }
+        
+        // Handle attachment deletion
+        const deleteAttachmentButtons = document.querySelectorAll('.delete-attachment');
+        deleteAttachmentButtons.forEach(button => {
+            button.addEventListener('click', function(e) {
+                if (!confirm('Are you sure you want to delete this attachment?')) {
+                    e.preventDefault();
+                }
+            });
+        });
+        
+        // Auto-open edit modal only if we have edit_task parameter and no POST submission
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('edit_task') && !<?= isset($_POST['update_task']) ? 'true' : 'false' ?>) {
+            setTimeout(function() {
+                const editModalElement = document.getElementById('editTaskModal');
+                if (editModalElement) {
+                    const editModal = new bootstrap.Modal(editModalElement);
+                    editModal.show();
+                    
+                    // Close modal when user clicks outside
+                    editModalElement.addEventListener('hidden.bs.modal', function () {
+                        // Remove edit_task parameter from URL without page reload
+                        const url = new URL(window.location);
+                        url.searchParams.delete('edit_task');
+                        window.history.replaceState({}, '', url);
                     });
                 }
-            }
-
-            // Handle attachment deletion
-            const deleteAttachmentButtons = document.querySelectorAll('.delete-attachment');
-            deleteAttachmentButtons.forEach(button => {
-                button.addEventListener('click', function(e) {
-                    if (!confirm('Are you sure you want to delete this attachment?')) {
-                        e.preventDefault();
-                    }
-                });
+            }, 100);
+        }
+        
+        // Update task status buttons
+        const updateButtons = document.querySelectorAll('.update-task-status');
+        const updateModal = new bootstrap.Modal(document.getElementById('updateTaskStatusModal'));
+        
+        updateButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const taskId = this.dataset.taskId;
+                const currentStatus = this.dataset.currentStatus;
+                
+                document.getElementById('update_task_id').value = taskId;
+                document.getElementById('update_task_status').value = currentStatus;
+                
+                updateModal.show();
             });
-
-            // Auto-open edit modal only if we have edit_task parameter and no POST submission
-            const urlParams = new URLSearchParams(window.location.search);
-            if (urlParams.has('edit_task') && !<?= isset($_POST['update_task']) ? 'true' : 'false' ?>) {
-                setTimeout(function() {
-                    const editModalElement = document.getElementById('editTaskModal');
-                    if (editModalElement) {
-                        const editModal = new bootstrap.Modal(editModalElement);
-                        editModal.show();
-
-                        // Close modal when user clicks outside
-                        editModalElement.addEventListener('hidden.bs.modal', function() {
-                            // Remove edit_task parameter from URL without page reload
-                            const url = new URL(window.location);
-                            url.searchParams.delete('edit_task');
-                            window.history.replaceState({}, '', url);
-                        });
-                    }
-                }, 100);
-            }
-
-            // Update task status buttons
-            const updateButtons = document.querySelectorAll('.update-task-status');
-            const updateModal = new bootstrap.Modal(document.getElementById('updateTaskStatusModal'));
-
-            updateButtons.forEach(button => {
-                button.addEventListener('click', function() {
-                    const taskId = this.dataset.taskId;
-                    const currentStatus = this.dataset.currentStatus;
-
-                    document.getElementById('update_task_id').value = taskId;
-                    document.getElementById('update_task_status').value = currentStatus;
-
-                    updateModal.show();
-                });
-            });
-
-            // Close modal handler for create task modal
-            const createModalElement = document.getElementById('createTaskModal');
-            if (createModalElement) {
-                createModalElement.addEventListener('hidden.bs.modal', function() {
-                    // Clear any form errors when modal closes
-                    const errorAlert = this.querySelector('.validation-error-alert');
-                    if (errorAlert) {
-                        errorAlert.remove();
-                    }
-                });
-            }
         });
+        
+        // Close modal handler for create task modal
+        const createModalElement = document.getElementById('createTaskModal');
+        if (createModalElement) {
+            createModalElement.addEventListener('hidden.bs.modal', function () {
+                // Clear any form errors when modal closes
+                const errorAlert = this.querySelector('.validation-error-alert');
+                if (errorAlert) {
+                    errorAlert.remove();
+                }
+            });
+        }
+    });
     </script>
 </head>
-
 <body>
     <?php include 'includes/header.php'; ?>
-
+    
     <div class="container-fluid mt-4">
         <div class="row">
             <div class="col-12">
@@ -899,16 +874,16 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
                         <?= $_SESSION['user_role'] == 'manager' ? 'All Tasks' : 'My Tasks' ?>
                     </h2>
                     <?php if ($_SESSION['user_role'] == 'manager'): ?>
-                        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createTaskModal">
-                            <i class="fas fa-plus"></i> Create Task
-                        </button>
+                    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createTaskModal">
+                        <i class="fas fa-plus"></i> Create Task
+                    </button>
                     <?php endif; ?>
                 </div>
 
                 <?php if (isset($success)): ?>
                     <div class="alert alert-success"><?= $success ?></div>
                 <?php endif; ?>
-
+                
                 <?php if (isset($error)): ?>
                     <div class="alert alert-danger"><?= $error ?></div>
                 <?php endif; ?>
@@ -929,34 +904,34 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
                                     <?php endforeach; ?>
                                 </select>
                             </div>
-
+                            
                             <?php if ($_SESSION['user_role'] == 'manager'): ?>
-                                <div class="col-md-3">
-                                    <label class="form-label">Assigned Developer</label>
-                                    <select class="form-select" name="filter_assignee" id="filter_assignee">
-                                        <option value="">All Developers</option>
-                                        <?php foreach ($developers as $dev): ?>
-                                            <option value="<?= $dev['id'] ?>" <?= $filter_assignee == $dev['id'] ? 'selected' : '' ?>>
-                                                <?= htmlspecialchars($dev['name']) ?>
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Assigned Developer</label>
+                                <select class="form-select" name="filter_assignee" id="filter_assignee">
+                                    <option value="">All Developers</option>
+                                    <?php foreach ($developers as $dev): ?>
+                                        <option value="<?= $dev['id'] ?>" <?= $filter_assignee == $dev['id'] ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($dev['name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
                             <?php endif; ?>
-
+                            
                             <div class="col-md-3">
                                 <label class="form-label">Start Date From</label>
-                                <input type="date" class="form-control" name="filter_start_date" id="filter_start_date"
-                                    value="<?= htmlspecialchars($filter_start_date) ?>">
+                                <input type="date" class="form-control" name="filter_start_date" id="filter_start_date" 
+                                       value="<?= htmlspecialchars($filter_start_date) ?>">
                             </div>
-
+                            
                             <div class="col-md-3">
                                 <label class="form-label">End Date To</label>
-                                <input type="date" class="form-control" name="filter_end_date" id="filter_end_date"
-                                    value="<?= htmlspecialchars($filter_end_date) ?>">
+                                <input type="date" class="form-control" name="filter_end_date" id="filter_end_date" 
+                                       value="<?= htmlspecialchars($filter_end_date) ?>">
                             </div>
                         </div>
-
+                        
                         <div class="mt-3">
                             <button type="submit" class="btn btn-primary">
                                 <i class="fas fa-search"></i> Apply Filters
@@ -986,133 +961,109 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
                         </thead>
                         <tbody>
                             <?php if (empty($tasks)): ?>
-                                <tr>
-                                    <td colspan="10" class="text-center py-4">
-                                        <div class="text-muted">
-                                            <i class="fas fa-inbox fa-2x mb-3"></i>
-                                            <p>No tasks found.</p>
-                                        </div>
-                                    </td>
-                                </tr>
+                            <tr>
+                                <td colspan="10" class="text-center py-4">
+                                    <div class="text-muted">
+                                        <i class="fas fa-inbox fa-2x mb-3"></i>
+                                        <p>No tasks found.</p>
+                                    </div>
+                                </td>
+                            </tr>
                             <?php else: ?>
-                                <?php foreach ($tasks as $task): ?>
-                                    <tr>
-                                        <td>
-                                            <strong><?= htmlspecialchars($task['name']) ?></strong>
-                                            <?php if ($task['description']): ?>
-                                                <br><small class="text-muted"><?= substr(strip_tags($task['description']), 0, 50) ?>...</small>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td><?= htmlspecialchars($task['project_name']) ?></td>
-                                        <td>
-                                            <span class="badge bg-<?=
-                                                                    $task['priority'] == 'critical' ? 'danger' : ($task['priority'] == 'high' ? 'warning' : ($task['priority'] == 'medium' ? 'info' : 'success'))
-                                                                    ?>">
-                                                <?= ucfirst($task['priority']) ?>
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <span class="badge bg-<?= $statusColors[$task['status']] ?? $statusColors['default'] ?>">
-                                                <?= ucfirst(str_replace('_', ' ', $task['status'])) ?>
-                                            </span>
-                                        </td>
-                                        <td><?= htmlspecialchars($task['assignee_names']) ?>
-                                            <div class="assignees-container">
-                                                <?php if (!empty($task['assignee_names'])): ?>
-                                                    <?php foreach ($task['assignee_names'] as $assignee):
-                                                        $profilePic = getProfilePicture($assignee['image'], $assignee['name'], 28);
-                                                        $defaultPic = getDefaultProfilePicture(28);
-                                                    ?>
-                                                        <div class="assignee-tooltip">
-                                                            <img src="<?= $profilePic ?>"
-                                                                class="assignee-avatar"
-                                                                alt="<?= htmlspecialchars($assignee['name']) ?>"
-                                                                title="<?= htmlspecialchars($assignee['name']) ?>"
-                                                                onerror="this.onerror=null; this.src='<?= $defaultPic ?>'">
-                                                            <span class="tooltip-text"><?= htmlspecialchars($assignee['name']) ?></span>
-                                                        </div>
-                                                    <?php endforeach; ?>
-                                                <?php else: ?>
-                                                    <div class="assignee-tooltip">
-                                                        <img src="<?= getDefaultProfilePicture(28) ?>"
-                                                            class="assignee-avatar"
-                                                            alt="Unassigned"
-                                                            title="Unassigned">
-                                                        <span class="tooltip-text">Unassigned</span>
-                                                    </div>
-                                                <?php endif; ?>
-                                            </div>
-                                        </td>
-                                        <td><?= $task['start_datetime'] ? date('M j, Y', strtotime($task['start_datetime'])) : '-' ?></td>
-                                        <td>
-                                            <?php if ($task['end_datetime']): ?>
-                                                <?php
-                                                $end_date = strtotime($task['end_datetime']);
-                                                $now = time();
-                                                $status = $task['status'];
-
-                                                $class = 'text-muted';
-                                                $message = '';
-
-                                                if ($status == 'closed') {
-                                                    // Check if closed after due date
-                                                } else {
-                                                    if ($now > $end_date) {
-                                                        $class = 'text-danger';
-                                                        $days_overdue = floor(($now - $end_date) / (60 * 60 * 24));
-                                                        $message = " (Overdue by " . $days_overdue . " days)";
-                                                    } elseif (($end_date - $now) <= (2 * 24 * 60 * 60)) {
-                                                        $class = 'text-warning';
-                                                        $days_remaining = floor(($end_date - $now) / (60 * 60 * 24));
-                                                        $message = " (Due in " . $days_remaining . " days)";
-                                                    }
-                                                }
-                                                ?>
-                                                <span class="<?= $class ?>">
-                                                    <?= date('M j, Y', $end_date) ?>
-                                                    <?= $message ?>
-                                                </span>
-                                            <?php else: ?>
-                                                -
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <?php if ($task['bug_count'] > 0): ?>
-                                                <span class="badge bg-danger"><?= $task['bug_count'] ?> bugs</span>
-                                            <?php else: ?>
-                                                <span class="text-muted">-</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <?php if ($task['attachment_count'] > 0): ?>
-                                                <span class="badge bg-info">
-                                                    <i class="fas fa-paperclip"></i> <?= $task['attachment_count'] ?>
-                                                </span>
-                                            <?php else: ?>
-                                                <span class="text-muted">-</span>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <div class="btn-group">
-                                                <?php if ($_SESSION['user_role'] == 'manager' || in_array($_SESSION['user_id'], explode(',', $task['assignee_ids'] ?? ''))): ?>
-                                                    <button class="btn btn-sm btn-outline-warning update-task-status"
-                                                        data-task-id="<?= $task['id'] ?>"
-                                                        data-current-status="<?= $task['status'] ?>">
-                                                        <i class="fas fa-sync"></i> Status
-                                                    </button>
-                                                <?php endif; ?>
-                                                <a href="task_details.php?id=<?= $task['id'] ?>" class="btn btn-sm btn-outline-primary">
-                                                    <i class="fas fa-eye"></i> View
-                                                </a>
-                                                <?php if ($_SESSION['user_role'] == 'manager'): ?>
-                                                    <a href="tasks.php?edit_task=<?= $task['id'] ?>" class="btn btn-sm btn-outline-info">
-                                                        <i class="fas fa-edit"></i> Edit
-                                                    </a>
-                                                <?php endif; ?>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
+                            <?php foreach ($tasks as $task): ?>
+                            <tr>
+                                <td>
+                                    <strong><?= htmlspecialchars($task['name']) ?></strong>
+                                    <?php if ($task['description']): ?>
+                                        <br><small class="text-muted"><?= substr(strip_tags($task['description']), 0, 50) ?>...</small>
+                                    <?php endif; ?>
+                                </td>
+                                <td><?= htmlspecialchars($task['project_name']) ?></td>
+                                <td>
+                                    <span class="badge bg-<?= 
+                                        $task['priority'] == 'critical' ? 'danger' : 
+                                        ($task['priority'] == 'high' ? 'warning' : 
+                                        ($task['priority'] == 'medium' ? 'info' : 'success')) 
+                                    ?>">
+                                        <?= ucfirst($task['priority']) ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="badge bg-<?= $statusColors[$task['status']] ?? $statusColors['default'] ?>">
+                                        <?= ucfirst(str_replace('_', ' ', $task['status'])) ?>
+                                    </span>
+                                </td>
+                                <td><?= htmlspecialchars($task['assignee_names']) ?></td>
+                                <td><?= $task['start_datetime'] ? date('M j, Y', strtotime($task['start_datetime'])) : '-' ?></td>
+                                <td>
+                                    <?php if ($task['end_datetime']): ?>
+                                        <?php 
+                                        $end_date = strtotime($task['end_datetime']);
+                                        $now = time();
+                                        $status = $task['status'];
+                                        
+                                        $class = 'text-muted';
+                                        $message = '';
+                                        
+                                        if ($status == 'closed') {
+                                            // Check if closed after due date
+                                        } else {
+                                            if ($now > $end_date) {
+                                                $class = 'text-danger';
+                                                $days_overdue = floor(($now - $end_date) / (60 * 60 * 24));
+                                                $message = " (Overdue by " . $days_overdue . " days)";
+                                            } elseif (($end_date - $now) <= (2 * 24 * 60 * 60)) {
+                                                $class = 'text-warning';
+                                                $days_remaining = floor(($end_date - $now) / (60 * 60 * 24));
+                                                $message = " (Due in " . $days_remaining . " days)";
+                                            }
+                                        }
+                                        ?>
+                                        <span class="<?= $class ?>">
+                                            <?= date('M j, Y', $end_date) ?>
+                                            <?= $message ?>
+                                        </span>
+                                    <?php else: ?>
+                                        -
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if ($task['bug_count'] > 0): ?>
+                                        <span class="badge bg-danger"><?= $task['bug_count'] ?> bugs</span>
+                                    <?php else: ?>
+                                        <span class="text-muted">-</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if ($task['attachment_count'] > 0): ?>
+                                        <span class="badge bg-info">
+                                            <i class="fas fa-paperclip"></i> <?= $task['attachment_count'] ?>
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="text-muted">-</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <div class="btn-group">
+                                        <?php if ($_SESSION['user_role'] == 'manager' || in_array($_SESSION['user_id'], explode(',', $task['assignee_ids'] ?? ''))): ?>
+                                        <button class="btn btn-sm btn-outline-warning update-task-status" 
+                                                data-task-id="<?= $task['id'] ?>" 
+                                                data-current-status="<?= $task['status'] ?>">
+                                            <i class="fas fa-sync"></i> Status
+                                        </button>
+                                        <?php endif; ?>
+                                        <a href="task_details.php?id=<?= $task['id'] ?>" class="btn btn-sm btn-outline-primary">
+                                            <i class="fas fa-eye"></i> View
+                                        </a>
+                                        <?php if ($_SESSION['user_role'] == 'manager'): ?>
+                                        <a href="tasks.php?edit_task=<?= $task['id'] ?>" class="btn btn-sm btn-outline-info">
+                                            <i class="fas fa-edit"></i> Edit
+                                        </a>
+                                        <?php endif; ?>
+                                    </div>
+                                </td>
+                            </tr>
+                            <?php endforeach; ?>
                             <?php endif; ?>
                         </tbody>
                     </table>
@@ -1122,217 +1073,217 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
     </div>
 
     <?php if ($_SESSION['user_role'] == 'manager'): ?>
-        <!-- Create Task Modal -->
-        <div class="modal fade" id="createTaskModal" tabindex="-1">
-            <div class="modal-dialog modal-lg">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Create New Task</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <form method="POST" enctype="multipart/form-data" id="createTaskForm">
-                        <div class="modal-body">
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label required">Task Name</label>
-                                    <input type="text" class="form-control" name="name" required
-                                        value="<?= isset($_POST['name']) ? htmlspecialchars($_POST['name']) : '' ?>"
-                                        maxlength="255">
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label required">Project</label>
-                                    <select class="form-select" name="project_id" required>
-                                        <option value="">Select Project</option>
-                                        <?php foreach ($projects as $project): ?>
-                                            <option value="<?= $project['id'] ?>"
-                                                <?= (isset($_POST['project_id']) && $_POST['project_id'] == $project['id']) ? 'selected' : '' ?>>
-                                                <?= htmlspecialchars($project['name']) ?>
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">Description</label>
-                                <textarea class="form-control wysiwyg" name="description"><?= isset($_POST['description']) ? htmlspecialchars($_POST['description']) : '' ?></textarea>
-                            </div>
-
-                            <div class="mb-3">
-                                <label class="form-label">Attachments</label>
-                                <input type="file" class="form-control" name="attachments[]" multiple
-                                    accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip">
-                                <small class="text-muted">Max 10MB per file. Allowed types: JPG, PNG, GIF, PDF, DOC, DOCX, TXT, ZIP</small>
-                            </div>
-
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label required">Priority</label>
-                                    <select class="form-select" name="priority" required>
-                                        <option value="low" <?= (isset($_POST['priority']) && $_POST['priority'] == 'low') ? 'selected' : '' ?>>Low</option>
-                                        <option value="medium" <?= (isset($_POST['priority']) && $_POST['priority'] == 'medium') || !isset($_POST['priority']) ? 'selected' : '' ?>>Medium</option>
-                                        <option value="high" <?= (isset($_POST['priority']) && $_POST['priority'] == 'high') ? 'selected' : '' ?>>High</option>
-                                        <option value="critical" <?= (isset($_POST['priority']) && $_POST['priority'] == 'critical') ? 'selected' : '' ?>>Critical</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">Assign Developers</label>
-                                    <select class="form-select" name="assignees[]" multiple>
-                                        <?php foreach ($developers as $dev): ?>
-                                            <option value="<?= $dev['id'] ?>"
-                                                <?= (isset($_POST['assignees']) && in_array($dev['id'], $_POST['assignees'])) ? 'selected' : '' ?>>
-                                                <?= htmlspecialchars($dev['name']) ?>
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                    <small class="text-muted">Hold Ctrl to select multiple</small>
-                                </div>
-                            </div>
-
-                            <div class="row">
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label required">Start Date & Time</label>
-                                    <input type="datetime-local" class="form-control" name="start_datetime" required
-                                        value="<?= isset($_POST['start_datetime']) ? htmlspecialchars($_POST['start_datetime']) : '' ?>">
-                                </div>
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label required">End Date & Time</label>
-                                    <input type="datetime-local" class="form-control" name="end_datetime" required
-                                        value="<?= isset($_POST['end_datetime']) ? htmlspecialchars($_POST['end_datetime']) : '' ?>">
-                                </div>
-                            </div>
-                        </div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                            <button type="submit" name="create_task" class="btn btn-primary">Create Task</button>
-                        </div>
-                    </form>
+    <!-- Create Task Modal -->
+    <div class="modal fade" id="createTaskModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Create New Task</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
+                <form method="POST" enctype="multipart/form-data" id="createTaskForm">
+                    <div class="modal-body">
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label required">Task Name</label>
+                                <input type="text" class="form-control" name="name" required
+                                       value="<?= isset($_POST['name']) ? htmlspecialchars($_POST['name']) : '' ?>"
+                                       maxlength="255">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label required">Project</label>
+                                <select class="form-select" name="project_id" required>
+                                    <option value="">Select Project</option>
+                                    <?php foreach ($projects as $project): ?>
+                                        <option value="<?= $project['id'] ?>" 
+                                            <?= (isset($_POST['project_id']) && $_POST['project_id'] == $project['id']) ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($project['name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Description</label>
+                            <textarea class="form-control wysiwyg" name="description"><?= isset($_POST['description']) ? htmlspecialchars($_POST['description']) : '' ?></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Attachments</label>
+                            <input type="file" class="form-control" name="attachments[]" multiple 
+                                   accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip">
+                            <small class="text-muted">Max 10MB per file. Allowed types: JPG, PNG, GIF, PDF, DOC, DOCX, TXT, ZIP</small>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label required">Priority</label>
+                                <select class="form-select" name="priority" required>
+                                    <option value="low" <?= (isset($_POST['priority']) && $_POST['priority'] == 'low') ? 'selected' : '' ?>>Low</option>
+                                    <option value="medium" <?= (isset($_POST['priority']) && $_POST['priority'] == 'medium') || !isset($_POST['priority']) ? 'selected' : '' ?>>Medium</option>
+                                    <option value="high" <?= (isset($_POST['priority']) && $_POST['priority'] == 'high') ? 'selected' : '' ?>>High</option>
+                                    <option value="critical" <?= (isset($_POST['priority']) && $_POST['priority'] == 'critical') ? 'selected' : '' ?>>Critical</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Assign Developers</label>
+                                <select class="form-select" name="assignees[]" multiple>
+                                    <?php foreach ($developers as $dev): ?>
+                                        <option value="<?= $dev['id'] ?>"
+                                            <?= (isset($_POST['assignees']) && in_array($dev['id'], $_POST['assignees'])) ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($dev['name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <small class="text-muted">Hold Ctrl to select multiple</small>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label required">Start Date & Time</label>
+                                <input type="datetime-local" class="form-control" name="start_datetime" required
+                                       value="<?= isset($_POST['start_datetime']) ? htmlspecialchars($_POST['start_datetime']) : '' ?>">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label required">End Date & Time</label>
+                                <input type="datetime-local" class="form-control" name="end_datetime" required
+                                       value="<?= isset($_POST['end_datetime']) ? htmlspecialchars($_POST['end_datetime']) : '' ?>">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        <button type="submit" name="create_task" class="btn btn-primary">Create Task</button>
+                    </div>
+                </form>
             </div>
         </div>
-
-        <!-- Edit Task Modal -->
-        <div class="modal fade" id="editTaskModal" tabindex="-1">
-            <div class="modal-dialog modal-lg">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title">Edit Task</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                    </div>
-                    <?php if ($edit_task): ?>
-                        <form method="POST" enctype="multipart/form-data">
-                            <input type="hidden" name="task_id" value="<?= $edit_task['id'] ?>">
-                            <div class="modal-body">
-                                <div class="row">
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label required">Task Name</label>
-                                        <input type="text" class="form-control" name="name" required
-                                            value="<?= htmlspecialchars($edit_task['name']) ?>"
-                                            maxlength="255">
-                                    </div>
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label required">Project</label>
-                                        <select class="form-select" name="project_id" required>
-                                            <option value="">Select Project</option>
-                                            <?php foreach ($projects as $project): ?>
-                                                <option value="<?= $project['id'] ?>"
-                                                    <?= $edit_task['project_id'] == $project['id'] ? 'selected' : '' ?>>
-                                                    <?= htmlspecialchars($project['name']) ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                </div>
-
-                                <div class="mb-3">
-                                    <label class="form-label">Description</label>
-                                    <textarea class="form-control wysiwyg" name="description"><?= htmlspecialchars($edit_task['description']) ?></textarea>
-                                </div>
-
-                                <?php if (!empty($task_attachments)): ?>
-                                    <div class="mb-3">
-                                        <label class="form-label">Existing Attachments</label>
-                                        <div class="attachments-container">
-                                            <?php foreach ($task_attachments as $attachment): ?>
-                                                <div class="attachment-item d-flex justify-content-between align-items-center">
-                                                    <div>
-                                                        <i class="fas fa-paperclip me-2"></i>
-                                                        <a href="<?= $attachment['file_path'] ?>" target="_blank" class="text-decoration-none">
-                                                            <?= htmlspecialchars($attachment['original_name']) ?>
-                                                        </a>
-                                                        <small class="text-muted ms-2">(<?= round($attachment['file_size'] / 1024, 2) ?> KB)</small>
-                                                    </div>
-                                                    <form method="POST" class="d-inline">
-                                                        <input type="hidden" name="attachment_id" value="<?= $attachment['id'] ?>">
-                                                        <input type="hidden" name="task_id" value="<?= $edit_task['id'] ?>">
-                                                        <button type="submit" name="delete_attachment" class="btn btn-sm btn-danger delete-attachment">
-                                                            <i class="fas fa-trash"></i>
-                                                        </button>
-                                                    </form>
-                                                </div>
-                                            <?php endforeach; ?>
-                                        </div>
-                                    </div>
-                                <?php endif; ?>
-
-                                <div class="mb-3">
-                                    <label class="form-label">Add New Attachments</label>
-                                    <input type="file" class="form-control" name="new_attachments[]" multiple
-                                        accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip">
-                                </div>
-
-                                <div class="row">
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label required">Priority</label>
-                                        <select class="form-select" name="priority" required>
-                                            <option value="low" <?= $edit_task['priority'] == 'low' ? 'selected' : '' ?>>Low</option>
-                                            <option value="medium" <?= $edit_task['priority'] == 'medium' ? 'selected' : '' ?>>Medium</option>
-                                            <option value="high" <?= $edit_task['priority'] == 'high' ? 'selected' : '' ?>>High</option>
-                                            <option value="critical" <?= $edit_task['priority'] == 'critical' ? 'selected' : '' ?>>Critical</option>
-                                        </select>
-                                    </div>
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label">Assign Developers</label>
-                                        <select class="form-select" name="assignees[]" multiple>
-                                            <?php foreach ($developers as $dev): ?>
-                                                <option value="<?= $dev['id'] ?>"
-                                                    <?= in_array($dev['id'], $edit_task['assignees'] ?? []) ? 'selected' : '' ?>>
-                                                    <?= htmlspecialchars($dev['name']) ?>
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                </div>
-
-                                <div class="row">
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label required">Start Date & Time</label>
-                                        <input type="datetime-local" class="form-control" name="start_datetime" required
-                                            value="<?= htmlspecialchars($edit_task['start_datetime']) ?>">
-                                    </div>
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label required">End Date & Time</label>
-                                        <input type="datetime-local" class="form-control" name="end_datetime" required
-                                            value="<?= htmlspecialchars($edit_task['end_datetime']) ?>">
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                                <button type="submit" name="update_task" class="btn btn-primary">Update Task</button>
-                            </div>
-                        </form>
-                    <?php else: ?>
-                        <div class="modal-body text-center py-5">
-                            <div class="spinner-border text-primary mb-3" role="status">
-                                <span class="visually-hidden">Loading...</span>
-                            </div>
-                            <p>Loading task data...</p>
-                        </div>
-                    <?php endif; ?>
+    </div>
+    
+    <!-- Edit Task Modal -->
+    <div class="modal fade" id="editTaskModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Edit Task</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
+                <?php if ($edit_task): ?>
+                <form method="POST" enctype="multipart/form-data">
+                    <input type="hidden" name="task_id" value="<?= $edit_task['id'] ?>">
+                    <div class="modal-body">
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label required">Task Name</label>
+                                <input type="text" class="form-control" name="name" required
+                                       value="<?= htmlspecialchars($edit_task['name']) ?>"
+                                       maxlength="255">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label required">Project</label>
+                                <select class="form-select" name="project_id" required>
+                                    <option value="">Select Project</option>
+                                    <?php foreach ($projects as $project): ?>
+                                        <option value="<?= $project['id'] ?>" 
+                                            <?= $edit_task['project_id'] == $project['id'] ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($project['name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Description</label>
+                            <textarea class="form-control wysiwyg" name="description"><?= htmlspecialchars($edit_task['description']) ?></textarea>
+                        </div>
+
+                        <?php if (!empty($task_attachments)): ?>
+                        <div class="mb-3">
+                            <label class="form-label">Existing Attachments</label>
+                            <div class="attachments-container">
+                                <?php foreach ($task_attachments as $attachment): ?>
+                                <div class="attachment-item d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <i class="fas fa-paperclip me-2"></i>
+                                        <a href="<?= $attachment['file_path'] ?>" target="_blank" class="text-decoration-none">
+                                            <?= htmlspecialchars($attachment['original_name']) ?>
+                                        </a>
+                                        <small class="text-muted ms-2">(<?= round($attachment['file_size'] / 1024, 2) ?> KB)</small>
+                                    </div>
+                                    <form method="POST" class="d-inline">
+                                        <input type="hidden" name="attachment_id" value="<?= $attachment['id'] ?>">
+                                        <input type="hidden" name="task_id" value="<?= $edit_task['id'] ?>">
+                                        <button type="submit" name="delete_attachment" class="btn btn-sm btn-danger delete-attachment">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </form>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                        <?php endif; ?>
+
+                        <div class="mb-3">
+                            <label class="form-label">Add New Attachments</label>
+                            <input type="file" class="form-control" name="new_attachments[]" multiple 
+                                   accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip">
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label required">Priority</label>
+                                <select class="form-select" name="priority" required>
+                                    <option value="low" <?= $edit_task['priority'] == 'low' ? 'selected' : '' ?>>Low</option>
+                                    <option value="medium" <?= $edit_task['priority'] == 'medium' ? 'selected' : '' ?>>Medium</option>
+                                    <option value="high" <?= $edit_task['priority'] == 'high' ? 'selected' : '' ?>>High</option>
+                                    <option value="critical" <?= $edit_task['priority'] == 'critical' ? 'selected' : '' ?>>Critical</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Assign Developers</label>
+                                <select class="form-select" name="assignees[]" multiple>
+                                    <?php foreach ($developers as $dev): ?>
+                                        <option value="<?= $dev['id'] ?>"
+                                            <?= in_array($dev['id'], $edit_task['assignees'] ?? []) ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($dev['name']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label required">Start Date & Time</label>
+                                <input type="datetime-local" class="form-control" name="start_datetime" required
+                                       value="<?= htmlspecialchars($edit_task['start_datetime']) ?>">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label required">End Date & Time</label>
+                                <input type="datetime-local" class="form-control" name="end_datetime" required
+                                       value="<?= htmlspecialchars($edit_task['end_datetime']) ?>">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        <button type="submit" name="update_task" class="btn btn-primary">Update Task</button>
+                    </div>
+                </form>
+                <?php else: ?>
+                <div class="modal-body text-center py-5">
+                    <div class="spinner-border text-primary mb-3" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p>Loading task data...</p>
+                </div>
+                <?php endif; ?>
             </div>
         </div>
+    </div>
     <?php endif; ?>
 
     <!-- Update Task Status Modal -->
@@ -1369,12 +1320,10 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
-
 </html>
 
 <?php
-function getTaskActivityDescription($log)
-{
+function getTaskActivityDescription($log) {
     switch ($log['action']) {
         case 'create':
             return ' created a task';
