@@ -21,7 +21,7 @@ function getProfilePicture($userImage, $userName, $size = 32) {
     }
     
     if (empty($initials)) {
-        $initials = 'U';
+        $initials = 'JN';
     }
     
     return 'https://ui-avatars.com/api/?name=' . urlencode($initials) . '&background=007bff&color=fff&size=' . $size;
@@ -29,9 +29,7 @@ function getProfilePicture($userImage, $userName, $size = 32) {
 
 // Function to get default profile picture URL
 function getDefaultProfilePicture($size = 28) {
-    $colors = ['#667eea', '#764ba2', '#f093fb', '#f5576c', '#4facfe', '#00f2fe'];
-    $color = $colors[rand(0, count($colors)-1)];
-    return "https://ui-avatars.com/api/?background=$color&color=fff&size=$size&name=User";
+    return "https://ui-avatars.com/api/?name=JN&background=007bff&color=fff&size=32";
 }
 
 $database = new Database();

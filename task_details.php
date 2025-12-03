@@ -406,8 +406,6 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
                                                     <span class="tooltip-text">Unassigned</span>
                                                 </div>
                                             <?php endif; ?>
-
-
                                         </div>
                                         <p class="mt-2"><strong>Created By:</strong> <?= htmlspecialchars($task['created_by_name']) ?></p>
                                         <p><strong>End Date:</strong>
