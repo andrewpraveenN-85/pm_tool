@@ -13,7 +13,7 @@ $current_user_id = $_SESSION['user_id'] ?? null;
 
 if (isset($_GET['file'])) {
     $filename = basename($_GET['file']);
-    $filepath = __DIR__ . '/../backups/' . $filename;
+    $filepath = __DIR__ . '/backups/' . $filename;
     
     if (file_exists($filepath) && (strpos($filename, '.sql') !== false || strpos($filename, '.zip') !== false)) {
         if (unlink($filepath)) {

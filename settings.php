@@ -101,6 +101,126 @@ if ($_POST && isset($_POST['update_settings'])) {
     }
 }
 
+// Handle logo upload
+if ($_POST && isset($_POST['upload_logo'])) {
+    try {
+        $upload_dir = __DIR__ . '/../uploads/logo/';
+        if (!is_dir($upload_dir)) {
+            mkdir($upload_dir, 0755, true);
+        }
+        
+        $allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/svg+xml', 'image/gif'];
+        $max_size = 2 * 1024 * 1024; // 2MB
+        
+        if (isset($_FILES['logo_file']) && $_FILES['logo_file']['error'] === UPLOAD_ERR_OK) {
+            $file_info = finfo_open(FILEINFO_MIME_TYPE);
+            $mime_type = finfo_file($file_info, $_FILES['logo_file']['tmp_name']);
+            finfo_close($file_info);
+            
+            if (!in_array($mime_type, $allowed_types)) {
+                $logo_error = "Invalid file type. Allowed: JPG, PNG, SVG, GIF";
+            } elseif ($_FILES['logo_file']['size'] > $max_size) {
+                $logo_error = "File too large. Maximum size: 2MB";
+            } else {
+                // Generate unique filename
+                $extension = pathinfo($_FILES['logo_file']['name'], PATHINFO_EXTENSION);
+                $filename = 'logo_' . time() . '.' . $extension;
+                $filepath = $upload_dir . $filename;
+                
+                if (move_uploaded_file($_FILES['logo_file']['tmp_name'], $filepath)) {
+                    // Update database setting
+                    $relative_path = 'uploads/logo/' . $filename;
+                    $query = "UPDATE settings SET setting_value = :value, updated_at = NOW() WHERE setting_key = 'app_logo'";
+                    $stmt = $db->prepare($query);
+                    $stmt->bindParam(':value', $relative_path);
+                    $stmt->execute();
+                    
+                    $logo_success = "Logo uploaded successfully!";
+                    
+                    // Log activity
+                    $activityLogger->logActivity(
+                        $current_user_id,
+                        'logo_upload',
+                        'settings',
+                        null,
+                        json_encode([
+                            'filename' => $filename,
+                            'file_size' => $_FILES['logo_file']['size'],
+                            'mime_type' => $mime_type
+                        ])
+                    );
+                } else {
+                    $logo_error = "Failed to upload logo. Please try again.";
+                }
+            }
+        } else {
+            $logo_error = "Please select a valid logo file.";
+        }
+    } catch (Exception $e) {
+        $logo_error = "Error uploading logo: " . $e->getMessage();
+    }
+}
+
+// Handle favicon upload
+if ($_POST && isset($_POST['upload_favicon'])) {
+    try {
+        $upload_dir = __DIR__ . '/../uploads/favicon/';
+        if (!is_dir($upload_dir)) {
+            mkdir($upload_dir, 0755, true);
+        }
+        
+        $allowed_types = ['image/x-icon', 'image/vnd.microsoft.icon', 'image/png', 'image/jpeg'];
+        $max_size = 512 * 1024; // 512KB
+        
+        if (isset($_FILES['favicon_file']) && $_FILES['favicon_file']['error'] === UPLOAD_ERR_OK) {
+            $file_info = finfo_open(FILEINFO_MIME_TYPE);
+            $mime_type = finfo_file($file_info, $_FILES['favicon_file']['tmp_name']);
+            finfo_close($file_info);
+            
+            if (!in_array($mime_type, $allowed_types)) {
+                $favicon_error = "Invalid file type. Allowed: ICO, PNG, JPG";
+            } elseif ($_FILES['favicon_file']['size'] > $max_size) {
+                $favicon_error = "File too large. Maximum size: 512KB";
+            } else {
+                // Generate unique filename
+                $extension = pathinfo($_FILES['favicon_file']['name'], PATHINFO_EXTENSION);
+                $filename = 'favicon_' . time() . '.' . $extension;
+                $filepath = $upload_dir . $filename;
+                
+                if (move_uploaded_file($_FILES['favicon_file']['tmp_name'], $filepath)) {
+                    // Update database setting
+                    $relative_path = 'uploads/favicon/' . $filename;
+                    $query = "UPDATE settings SET setting_value = :value, updated_at = NOW() WHERE setting_key = 'app_favicon'";
+                    $stmt = $db->prepare($query);
+                    $stmt->bindParam(':value', $relative_path);
+                    $stmt->execute();
+                    
+                    $favicon_success = "Favicon uploaded successfully!";
+                    
+                    // Log activity
+                    $activityLogger->logActivity(
+                        $current_user_id,
+                        'favicon_upload',
+                        'settings',
+                        null,
+                        json_encode([
+                            'filename' => $filename,
+                            'file_size' => $_FILES['favicon_file']['size'],
+                            'mime_type' => $mime_type
+                        ])
+                    );
+                } else {
+                    $favicon_error = "Failed to upload favicon. Please try again.";
+                }
+            }
+        } else {
+            $favicon_error = "Please select a valid favicon file.";
+        }
+    } catch (Exception $e) {
+        $favicon_error = "Error uploading favicon: " . $e->getMessage();
+    }
+}
+
 // Handle SMTP test
 if ($_POST && isset($_POST['test_smtp'])) {
     include 'includes/EmailService.php';
@@ -342,7 +462,7 @@ if (isset($_POST['backup_full'])) {
             $zip->close();
             
             // Cleanup temp directory
-            $this->deleteDirectory($temp_dir);
+            deleteDirectory($temp_dir);
             
             if (file_exists($full_backup_file)) {
                 $full_backup_success = "Full system backup created successfully! File: " . basename($full_backup_file);
@@ -385,7 +505,7 @@ function deleteDirectory($dir) {
 }
 
 // Get current settings
-$settings_query = "SELECT * FROM settings";
+$settings_query = "SELECT * FROM settings ORDER BY category, setting_key";
 $settings_stmt = $db->query($settings_query);
 $settings = $settings_stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -453,6 +573,36 @@ foreach ($settings as $setting) {
             transform: translateY(-2px);
             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
         }
+        .logo-preview {
+            max-width: 200px;
+            max-height: 80px;
+            object-fit: contain;
+            border: 1px solid #dee2e6;
+            padding: 5px;
+            background: white;
+        }
+        .favicon-preview {
+            width: 32px;
+            height: 32px;
+            object-fit: contain;
+            border: 1px solid #dee2e6;
+            padding: 2px;
+            background: white;
+        }
+        .upload-section {
+            border: 2px dashed #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            background: #f8f9fa;
+            margin-bottom: 20px;
+        }
+        .current-logo {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
     </style>
 </head>
 
@@ -470,6 +620,22 @@ foreach ($settings as $setting) {
                 
                 <?php if (isset($error)): ?>
                     <div class="alert alert-danger"><?= $error ?></div>
+                <?php endif; ?>
+                
+                <?php if (isset($logo_success)): ?>
+                    <div class="alert alert-success"><?= $logo_success ?></div>
+                <?php endif; ?>
+                
+                <?php if (isset($logo_error)): ?>
+                    <div class="alert alert-danger"><?= $logo_error ?></div>
+                <?php endif; ?>
+                
+                <?php if (isset($favicon_success)): ?>
+                    <div class="alert alert-success"><?= $favicon_success ?></div>
+                <?php endif; ?>
+                
+                <?php if (isset($favicon_error)): ?>
+                    <div class="alert alert-danger"><?= $favicon_error ?></div>
                 <?php endif; ?>
                 
                 <?php if (isset($smtp_test_success)): ?>
@@ -503,6 +669,100 @@ foreach ($settings as $setting) {
                 <?php if (isset($full_backup_error)): ?>
                     <div class="alert alert-danger"><?= $full_backup_error ?></div>
                 <?php endif; ?>
+
+                <!-- Logo & Favicon Settings -->
+                <div class="card mb-4">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0"><i class="fas fa-image"></i> Branding & Appearance</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <!-- Logo Upload -->
+                            <div class="col-md-6 mb-4">
+                                <h6>Application Logo</h6>
+                                <div class="upload-section">
+                                    <?php 
+                                    $current_logo = $settings_array['app_logo']['setting_value'] ?? '';
+                                    $logo_path = !empty($current_logo) && file_exists(__DIR__ . '/../' . $current_logo) ? '../' . $current_logo : '';
+                                    ?>
+                                    
+                                    <?php if ($logo_path): ?>
+                                        <div class="current-logo">
+                                            <img src="<?= $logo_path ?>" alt="Current Logo" class="logo-preview">
+                                            <div>
+                                                <strong>Current Logo:</strong><br>
+                                                <small><?= basename($current_logo) ?></small>
+                                            </div>
+                                        </div>
+                                    <?php else: ?>
+                                        <p class="text-muted">No logo uploaded. Default will be used.</p>
+                                    <?php endif; ?>
+                                    
+                                    <form method="POST" enctype="multipart/form-data" class="mt-3">
+                                        <div class="mb-3">
+                                            <label class="form-label">Upload New Logo</label>
+                                            <input type="file" class="form-control" name="logo_file" accept=".jpg,.jpeg,.png,.svg,.gif" required>
+                                            <small class="text-muted">Allowed: JPG, PNG, SVG, GIF (Max: 2MB)</small>
+                                        </div>
+                                        <button type="submit" name="upload_logo" class="btn btn-primary">
+                                            <i class="fas fa-upload"></i> Upload Logo
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                            
+                            <!-- Favicon Upload -->
+                            <div class="col-md-6 mb-4">
+                                <h6>Favicon</h6>
+                                <div class="upload-section">
+                                    <?php 
+                                    $current_favicon = $settings_array['app_favicon']['setting_value'] ?? '';
+                                    $favicon_path = !empty($current_favicon) && file_exists(__DIR__ . '/../' . $current_favicon) ? '../' . $current_favicon : '';
+                                    ?>
+                                    
+                                    <?php if ($favicon_path): ?>
+                                        <div class="current-logo">
+                                            <img src="<?= $favicon_path ?>" alt="Current Favicon" class="favicon-preview">
+                                            <div>
+                                                <strong>Current Favicon:</strong><br>
+                                                <small><?= basename($current_favicon) ?></small>
+                                            </div>
+                                        </div>
+                                    <?php else: ?>
+                                        <p class="text-muted">No favicon uploaded. Default will be used.</p>
+                                    <?php endif; ?>
+                                    
+                                    <form method="POST" enctype="multipart/form-data" class="mt-3">
+                                        <div class="mb-3">
+                                            <label class="form-label">Upload New Favicon</label>
+                                            <input type="file" class="form-control" name="favicon_file" accept=".ico,.png,.jpg,.jpeg" required>
+                                            <small class="text-muted">Allowed: ICO, PNG, JPG (Max: 512KB)</small>
+                                        </div>
+                                        <button type="submit" name="upload_favicon" class="btn btn-primary">
+                                            <i class="fas fa-upload"></i> Upload Favicon
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Logo Dimensions -->
+                        <div class="row mt-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Logo Width (px)</label>
+                                <input type="number" class="form-control" name="settings[logo_width]"
+                                    value="<?= htmlspecialchars($settings_array['logo_width']['setting_value'] ?? '150') ?>"
+                                    min="50" max="500">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Logo Height (px)</label>
+                                <input type="number" class="form-control" name="settings[logo_height]"
+                                    value="<?= htmlspecialchars($settings_array['logo_height']['setting_value'] ?? '50') ?>"
+                                    min="20" max="200">
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- Backup Section -->
                 <div class="card mb-4">
@@ -608,7 +868,7 @@ foreach ($settings as $setting) {
                     </div>
                 </div>
 
-                <!-- Rest of your existing settings form (General Settings) -->
+                <!-- General Settings -->
                 <div class="card mb-4">
                     <div class="card-header">
                         <h5 class="mb-0">General Settings</h5>
@@ -759,8 +1019,14 @@ foreach ($settings as $setting) {
                                 <p><strong>Server IP:</strong> <?= $_SERVER['SERVER_ADDR'] ?></p>
                                 <p><strong>Backup Directory:</strong> 
                                     <?php 
-                                    $backup_dir = __DIR__ . '/backups/';
+                                    $backup_dir = __DIR__ . '/../backups/';
                                     echo is_dir($backup_dir) ? '<span class="text-success">Exists</span>' : '<span class="text-danger">Not found</span>';
+                                    ?>
+                                </p>
+                                <p><strong>Logo Directory:</strong> 
+                                    <?php 
+                                    $logo_dir = __DIR__ . '/../uploads/logo/';
+                                    echo is_dir($logo_dir) ? '<span class="text-success">Exists</span>' : '<span class="text-danger">Not found</span>';
                                     ?>
                                 </p>
                             </div>
@@ -781,6 +1047,12 @@ foreach ($settings as $setting) {
                                     <?php
                                     $uploads_dir = __DIR__ . '/uploads/';
                                     echo is_dir($uploads_dir) ? '<span class="text-success">Exists</span>' : '<span class="text-danger">Not found</span>';
+                                    ?>
+                                </p>
+                                <p><strong>Favicon Directory:</strong> 
+                                    <?php 
+                                    $favicon_dir = __DIR__ . '/../uploads/favicon/';
+                                    echo is_dir($favicon_dir) ? '<span class="text-success">Exists</span>' : '<span class="text-danger">Not found</span>';
                                     ?>
                                 </p>
                             </div>
@@ -896,6 +1168,35 @@ foreach ($settings as $setting) {
             const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
             return re.test(email);
         }
+        
+        // Preview uploaded files
+        document.querySelector('input[name="logo_file"]')?.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const preview = document.querySelector('.logo-preview');
+                    if (preview) {
+                        preview.src = e.target.result;
+                    }
+                }
+                reader.readAsDataURL(file);
+            }
+        });
+        
+        document.querySelector('input[name="favicon_file"]')?.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const preview = document.querySelector('.favicon-preview');
+                    if (preview) {
+                        preview.src = e.target.result;
+                    }
+                }
+                reader.readAsDataURL(file);
+            }
+        });
     </script>
 </body>
 <footer class="bg-dark text-light text-center py-3 mt-5">
