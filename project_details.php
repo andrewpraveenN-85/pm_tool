@@ -113,6 +113,8 @@ if ($project['duration_days']) {
     <title><?= htmlspecialchars($project['name']) ?> - Task Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.4/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/responsive/2.4.1/css/responsive.bootstrap5.min.css" rel="stylesheet">
     <!-- Chart.js for progress visualization -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
@@ -175,6 +177,30 @@ if ($project['duration_days']) {
         }
         .table td {
             vertical-align: middle;
+        }
+        /* DataTables custom styling */
+        .dataTables_wrapper .dataTables_length,
+        .dataTables_wrapper .dataTables_filter,
+        .dataTables_wrapper .dataTables_info,
+        .dataTables_wrapper .dataTables_processing,
+        .dataTables_wrapper .dataTables_paginate {
+            color: #333;
+        }
+        .dataTables_wrapper .dataTables_filter input {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 4px 8px;
+        }
+        .dataTables_wrapper .dataTables_paginate .paginate_button {
+            padding: 4px 10px;
+            margin: 0 2px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .dataTables_wrapper .dataTables_paginate .paginate_button.current {
+            background: #007bff;
+            color: white !important;
+            border-color: #007bff;
         }
     </style>
 </head>
@@ -388,7 +414,7 @@ if ($project['duration_days']) {
                             </div>
                         <?php else: ?>
                             <div class="table-responsive">
-                                <table class="table table-striped table-hover">
+                                <table id="tasksTable" class="table table-striped table-hover w-100">
                                     <thead class="table-dark">
                                         <tr>
                                             <th>Task Name</th>
@@ -512,8 +538,47 @@ if ($project['duration_days']) {
         </div>
     </div>
 
+    <!-- jQuery (required for DataTables) -->
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <!-- Bootstrap Bundle with Popper -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- DataTables JS -->
+    <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.4/js/dataTables.bootstrap5.min.js"></script>
+    <script src="https://cdn.datatables.net/responsive/2.4.1/js/dataTables.responsive.min.js"></script>
+    <script src="https://cdn.datatables.net/responsive/2.4.1/js/responsive.bootstrap5.min.js"></script>
     <script>
+        $(document).ready(function() {
+            $('#tasksTable').DataTable({
+                responsive: true,
+                pageLength: 10,
+                lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "All"]],
+                order: [[5, 'desc']], // Sort by Created At descending by default
+                language: {
+                    search: "Search tasks:",
+                    lengthMenu: "Show _MENU_ tasks",
+                    info: "Showing _START_ to _END_ of _TOTAL_ tasks",
+                    paginate: {
+                        first: "First",
+                        last: "Last",
+                        next: "Next",
+                        previous: "Previous"
+                    }
+                },
+                columnDefs: [
+                    {
+                        targets: [0, 1, 2, 3, 4, 5, 6],
+                        orderable: true
+                    },
+                    {
+                        targets: [6], // Actions column
+                        orderable: false,
+                        searchable: false
+                    }
+                ]
+            });
+        });
+
         document.addEventListener('DOMContentLoaded', function() {
             // Time Progress Chart
             const timeCtx = document.getElementById('timeProgressChart').getContext('2d');
