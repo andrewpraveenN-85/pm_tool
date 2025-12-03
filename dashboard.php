@@ -11,6 +11,34 @@ $auth->requireAuth();
 // Initialize notification system
 $notification = new Notification($db);
 
+// Function to get profile picture URL with fallback (same as users.php)
+function getProfilePicture($userImage, $userName, $size = 40) {
+    if (!empty($userImage) && file_exists($userImage)) {
+        return $userImage;
+    }
+    
+    // Generate avatar with user's initials
+    $initials = '';
+    $nameParts = explode(' ', $userName);
+    if (count($nameParts) > 0) {
+        $initials = strtoupper(substr($nameParts[0], 0, 1));
+        if (count($nameParts) > 1) {
+            $initials .= strtoupper(substr($nameParts[1], 0, 1));
+        }
+    }
+    
+    if (empty($initials)) {
+        $initials = 'U';
+    }
+    
+    return 'https://ui-avatars.com/api/?name=' . urlencode($initials) . '&background=007bff&color=fff&size=' . $size;
+}
+
+// Function to get default profile picture URL
+function getDefaultProfilePicture($size = 40) {
+    return 'https://ui-avatars.com/api/?name=User&background=007bff&color=fff&size=' . $size;
+}
+
 // Get filter parameters
 $project_filter = $_GET['project'] ?? '';
 $priority_filter = $_GET['priority'] ?? '';
@@ -53,8 +81,11 @@ $tasks_by_status = [
     'closed' => []
 ];
 
+// Modified query to get assignees with their profile images
 $query = "SELECT t.*, p.name as project_name, 
+          GROUP_CONCAT(DISTINCT u.id) as assignee_ids,
           GROUP_CONCAT(DISTINCT u.name) as assignee_names,
+          GROUP_CONCAT(DISTINCT u.image) as assignee_images,
           COUNT(DISTINCT b.id) as bug_count
           FROM tasks t
           LEFT JOIN projects p ON t.project_id = p.id
@@ -72,6 +103,22 @@ foreach ($filter_params as $key => $value) {
 $stmt->execute();
 
 while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+    // Process assignee data to create arrays
+    $assigneeIds = !empty($row['assignee_ids']) ? explode(',', $row['assignee_ids']) : [];
+    $assigneeNames = !empty($row['assignee_names']) ? explode(',', $row['assignee_names']) : [];
+    $assigneeImages = !empty($row['assignee_images']) ? explode(',', $row['assignee_images']) : [];
+    
+    // Create array of assignees with their details
+    $assignees = [];
+    for ($i = 0; $i < count($assigneeIds); $i++) {
+        $assignees[] = [
+            'id' => $assigneeIds[$i] ?? '',
+            'name' => $assigneeNames[$i] ?? 'Unknown',
+            'image' => $assigneeImages[$i] ?? ''
+        ];
+    }
+    
+    $row['assignees'] = $assignees;
     $tasks_by_status[$row['status']][] = $row;
 }
 
@@ -132,6 +179,50 @@ $overdue_tasks = $db->query("SELECT COUNT(*) FROM tasks WHERE end_datetime < NOW
         }
         .stat-card:hover {
             transform: translateY(-5px);
+        }
+        .assignee-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid #fff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            cursor: pointer;
+        }
+        .assignee-avatar:hover {
+            border-color: #007bff;
+            transform: scale(1.1);
+        }
+        .assignees-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 8px;
+        }
+        .assignee-tooltip {
+            position: relative;
+            display: inline-block;
+        }
+        .assignee-tooltip .tooltip-text {
+            visibility: hidden;
+            width: 120px;
+            background-color: #333;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -60px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 12px;
+        }
+        .assignee-tooltip:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
         }
     </style>
 </head>
@@ -251,11 +342,43 @@ $overdue_tasks = $db->query("SELECT COUNT(*) FROM tasks WHERE end_datetime < NOW
                          data-task-id="<?= $task['id'] ?>" 
                          draggable="true">
                         <h6 class="mb-1"><?= htmlspecialchars($task['name']) ?></h6>
-                        <small class="text-muted">Project: <?= htmlspecialchars($task['project_name']) ?></small><br>
-                        <small class="text-muted">Assignees: <?= htmlspecialchars($task['assignee_names']) ?></small><br>
-                        <?php if ($task['bug_count'] > 0): ?>
-                            <small class="text-danger"><i class="fas fa-bug"></i> <?= $task['bug_count'] ?> bugs</small>
+                        <small class="text-muted">Project: <?= htmlspecialchars($task['project_name']) ?></small>
+                        
+                        <!-- Assignees with Profile Pictures -->
+                        <?php if (!empty($task['assignees'])): ?>
+                            <div class="assignees-container">
+                                <?php foreach ($task['assignees'] as $assignee): 
+                                    $profilePic = getProfilePicture($assignee['image'], $assignee['name'], 32);
+                                    $defaultPic = getDefaultProfilePicture(32);
+                                ?>
+                                    <div class="assignee-tooltip">
+                                        <img src="<?= $profilePic ?>" 
+                                             class="assignee-avatar" 
+                                             alt="<?= htmlspecialchars($assignee['name']) ?>"
+                                             title="<?= htmlspecialchars($assignee['name']) ?>"
+                                             onerror="this.onerror=null; this.src='<?= $defaultPic ?>'">
+                                        <span class="tooltip-text"><?= htmlspecialchars($assignee['name']) ?></span>
+                                    </div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php else: ?>
+                            <div class="assignees-container">
+                                <div class="assignee-tooltip">
+                                    <img src="<?= getDefaultProfilePicture(32) ?>" 
+                                         class="assignee-avatar" 
+                                         alt="Unassigned"
+                                         title="Unassigned">
+                                    <span class="tooltip-text">Unassigned</span>
+                                </div>
+                            </div>
                         <?php endif; ?>
+                        
+                        <?php if ($task['bug_count'] > 0): ?>
+                            <div class="mt-2">
+                                <small class="text-danger"><i class="fas fa-bug"></i> <?= $task['bug_count'] ?> bug(s)</small>
+                            </div>
+                        <?php endif; ?>
+                        
                         <div class="mt-2">
                             <span class="badge bg-<?= 
                                 $task['priority'] == 'critical' ? 'danger' : 
