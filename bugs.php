@@ -1291,9 +1291,11 @@ if (isset($_GET['edit_bug'])) {
             });
         <?php endif; ?>
 
-                function updateTaskDropdown() {
-            const projectId = document.getElementById('projectSelect').value;
+        window.updateTaskDropdown = function() {
+            const projectSelect = document.getElementById('projectSelect');
+            const projectId = projectSelect ? projectSelect.value : '';
             const taskSelect = document.getElementById('taskSelect');
+            if (!taskSelect) return;
             
             if (projectId) {
                 // Fetch tasks for the selected project via AJAX
@@ -1323,9 +1325,11 @@ if (isset($_GET['edit_bug'])) {
             }
         }
         
-        function updateEditTaskDropdown() {
-            const projectId = document.getElementById('editProjectSelect').value;
+        window.updateEditTaskDropdown = function() {
+            const projectSelect = document.getElementById('editProjectSelect');
+            const projectId = projectSelect ? projectSelect.value : '';
             const taskSelect = document.getElementById('editTaskSelect');
+            if (!taskSelect) return;
             
             if (projectId) {
                 // Fetch tasks for the selected project via AJAX
