@@ -524,6 +524,10 @@ $filter_assignee = $_GET['filter_assignee'] ?? '';
 $filter_start_date = $_GET['filter_start_date'] ?? '';
 $filter_end_date = $_GET['filter_end_date'] ?? '';
 
+// Check if any filter is active
+$isFiltered = !empty($filter_project) || !empty($filter_assignee) ||
+    !empty($filter_start_date) || !empty($filter_end_date);
+
 // Build filter conditions
 $filter_conditions = [];
 $filter_params = [];
@@ -670,8 +674,6 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
         $task_attachments = $attachments_stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 }
-
-
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -815,6 +817,7 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
             font-size: 0.8rem;
             color: #6c757d;
         }
+
         /* DataTables custom styling */
         .dataTables_wrapper .dataTables_length,
         .dataTables_wrapper .dataTables_filter,
@@ -823,21 +826,132 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
         .dataTables_wrapper .dataTables_paginate {
             color: #333;
         }
+
         .dataTables_wrapper .dataTables_filter input {
             border: 1px solid #ddd;
             border-radius: 4px;
             padding: 4px 8px;
         }
+
         .dataTables_wrapper .dataTables_paginate .paginate_button {
             padding: 4px 10px;
             margin: 0 2px;
             border: 1px solid #ddd;
             border-radius: 4px;
         }
+
         .dataTables_wrapper .dataTables_paginate .paginate_button.current {
             background: #007bff;
             color: white !important;
             border-color: #007bff;
+        }
+
+        /* Filter note styling */
+        .filter-note {
+            border-left: 4px solid #17a2b8;
+            margin-top: 15px;
+        }
+
+        /* Table wrapper styling */
+        .table-wrapper {
+            position: relative;
+        }
+
+        .table-wrapper.loading::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .table-wrapper.loading::before {
+            content: 'Loading...';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1001;
+            color: #007bff;
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+
+        /* Enhanced table styling for filtered mode */
+        .table-enhanced {
+            width: 100% !important;
+            border-collapse: collapse;
+        }
+
+        .table-enhanced th {
+            background-color: #343a40;
+            color: white;
+            font-weight: 600;
+            padding: 12px;
+        }
+
+        .table-enhanced td {
+            padding: 12px;
+            vertical-align: middle;
+        }
+
+        .table-enhanced tbody tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+
+        .table-enhanced tbody tr:hover {
+            background-color: #e9ecef;
+        }
+
+        /* Status indicator */
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+
+        .status-active {
+            background-color: #28a745;
+        }
+
+        .status-pending {
+            background-color: #ffc107;
+        }
+
+        .status-inactive {
+            background-color: #6c757d;
+        }
+
+        /* Badge enhancements */
+        .badge-pill {
+            border-radius: 10rem;
+            padding: 0.4em 0.8em;
+            font-size: 0.85em;
+        }
+
+        /* Priority colors */
+        .priority-critical {
+            background-color: #dc3545;
+        }
+
+        .priority-high {
+            background-color: #fd7e14;
+        }
+
+        .priority-medium {
+            background-color: #17a2b8;
+        }
+
+        .priority-low {
+            background-color: #28a745;
         }
     </style>
     <script>
@@ -939,6 +1053,11 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
                         filterForm.submit();
                     });
                 }
+
+                // Show loading when submitting filters
+                filterForm.addEventListener('submit', function() {
+                    document.querySelector('.table-wrapper').classList.add('loading');
+                });
             }
 
             // Handle attachment deletion
@@ -1080,10 +1199,18 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
                             </button>
                         </div>
                     </form>
+
+                    <?php if ($isFiltered): ?>
+                        <div class="alert alert-info filter-note mt-3">
+                            <i class="fas fa-info-circle"></i>
+                            <strong>Filter Mode Active:</strong> Showing filtered results.
+                            <a href="tasks.php" class="alert-link">Clear filters</a> to enable full DataTable features.
+                        </div>
+                    <?php endif; ?>
                 </div>
 
-                <div class="table-responsive">
-                    <table id="tasksTable" class="table table-striped table-hover w-100">
+                <div class="table-wrapper <?= $isFiltered ? 'loading' : '' ?>">
+                    <table id="tasksTable" class="table table-striped table-hover w-100 table-enhanced">
                         <thead class="table-dark">
                             <tr>
                                 <th>Task Name</th>
@@ -1119,14 +1246,12 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
                                         </td>
                                         <td><?= htmlspecialchars($task['project_name']) ?></td>
                                         <td>
-                                            <span class="badge bg-<?=
-                                                                    $task['priority'] == 'critical' ? 'danger' : ($task['priority'] == 'high' ? 'warning' : ($task['priority'] == 'medium' ? 'info' : 'success'))
-                                                                    ?>">
+                                            <span class="badge badge-pill priority-<?= $task['priority'] ?>">
                                                 <?= ucfirst($task['priority']) ?>
                                             </span>
                                         </td>
                                         <td>
-                                            <span class="badge bg-<?= $statusColors[$task['status']] ?? $statusColors['default'] ?>">
+                                            <span class="badge bg-<?= $statusColors[$task['status']] ?? $statusColors['default'] ?> badge-pill">
                                                 <?= ucfirst(str_replace('_', ' ', $task['status'])) ?>
                                             </span>
                                         </td>
@@ -1192,14 +1317,14 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
                                         </td>
                                         <td>
                                             <?php if ($task['bug_count'] > 0): ?>
-                                                <span class="badge bg-danger"><?= $task['bug_count'] ?> bugs</span>
+                                                <span class="badge bg-danger badge-pill"><?= $task['bug_count'] ?> bugs</span>
                                             <?php else: ?>
                                                 <span class="text-muted">-</span>
                                             <?php endif; ?>
                                         </td>
                                         <td>
                                             <?php if ($task['attachment_count'] > 0): ?>
-                                                <span class="badge bg-info">
+                                                <span class="badge bg-info badge-pill">
                                                     <i class="fas fa-paperclip"></i> <?= $task['attachment_count'] ?>
                                                 </span>
                                             <?php else: ?>
@@ -1490,38 +1615,80 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
     <script src="https://cdn.datatables.net/1.13.4/js/dataTables.bootstrap5.min.js"></script>
     <script src="https://cdn.datatables.net/responsive/2.4.1/js/dataTables.responsive.min.js"></script>
     <script src="https://cdn.datatables.net/responsive/2.4.1/js/responsive.bootstrap5.min.js"></script>
-   <script>
-    $(document).ready(function() {
-            $('#tasksTable').DataTable({
-                responsive: true,
-                pageLength: 10,
-                lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "All"]],
-                order: [[5, 'desc']], // Sort by Created At descending by default
-                language: {
-                    search: "Search tasks:",
-                    lengthMenu: "Show _MENU_ tasks",
-                    info: "Showing _START_ to _END_ of _TOTAL_ tasks",
-                    paginate: {
-                        first: "First",
-                        last: "Last",
-                        next: "Next",
-                        previous: "Previous"
-                    }
-                },
-                columnDefs: [
-                    {
-                        targets: [0, 1, 2, 3, 4, 5, 6],
-                        orderable: true
+
+    <script>
+        $(document).ready(function() {
+            // Check if any filter is applied
+            const isFiltered = <?= $isFiltered ? 'true' : 'false' ?>;
+
+            // Remove loading class after page load
+            setTimeout(function() {
+                $('.table-wrapper').removeClass('loading');
+            }, 300);
+
+            if (!isFiltered) {
+                // Initialize DataTable only when no filters are active
+                $('#tasksTable').DataTable({
+                    responsive: true,
+                    pageLength: 10,
+                    lengthMenu: [
+                        [10, 25, 50, 100, -1],
+                        [10, 25, 50, 100, "All"]
+                    ],
+                    order: [
+                        [5, 'desc']
+                    ], // Sort by start date descending
+                    stateSave: true, // Remember user's settings
+                    stateDuration: -1, // Save to localStorage forever
+                    language: {
+                        search: "Search tasks:",
+                        lengthMenu: "Show _MENU_ tasks",
+                        info: "Showing _START_ to _END_ of _TOTAL_ tasks",
+                        infoEmpty: "No tasks available",
+                        zeroRecords: "No matching tasks found",
+                        paginate: {
+                            first: "First",
+                            last: "Last",
+                            next: "Next",
+                            previous: "Previous"
+                        }
                     },
-                    {
-                        targets: [6], // Actions column
-                        orderable: false,
-                        searchable: false
+                    columnDefs: [{
+                            targets: [0, 1, 2, 3, 4, 5, 6, 7, 8],
+                            orderable: true
+                        },
+                        {
+                            targets: [9], // Actions column
+                            orderable: false,
+                            searchable: false
+                        }
+                    ],
+                    initComplete: function() {
+                        // Add custom CSS class to DataTables elements
+                        this.api().columns().every(function() {
+                            var column = this;
+                            // You can add column-specific initialization here
+                        });
                     }
-                ]
+                });
+            } else {
+                // When filters are active, just add basic table styling
+                $('#tasksTable').addClass('table-striped table-hover table-enhanced');
+            }
+
+            // Handle filter form submission
+            $('#filterForm').on('submit', function() {
+                // Show loading indicator
+                $('.table-wrapper').addClass('loading');
+            });
+
+            // Clear filters button
+            $('#clearFilters').on('click', function(e) {
+                e.preventDefault();
+                window.location.href = 'tasks.php';
             });
         });
-   </script>
+    </script>
 </body>
 
 </html>

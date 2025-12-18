@@ -173,21 +173,19 @@ $task_attachments_stmt->bindParam(':task_id', $task_id);
 $task_attachments_stmt->execute();
 $task_attachments = $task_attachments_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-// Get task bugs
-$bugs_query = "
-    SELECT b.*, u.name as created_by_name 
-    FROM bugs b 
-    LEFT JOIN users u ON b.created_by = u.id 
-    WHERE b.task_id = :task_id 
-    ORDER BY b.priority DESC, b.created_at DESC
-";
-$bugs_stmt = $db->prepare($bugs_query);
-$bugs_stmt->bindParam(':task_id', $task_id);
-$bugs_stmt->execute();
-$bugs = $bugs_stmt->fetchAll(PDO::FETCH_ASSOC);
-
 // Get all developers for assignment
 $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'developer' AND status = 'active'")->fetchAll(PDO::FETCH_ASSOC);
+
+// Define status to color mapping (same as tasks.php)
+$statusColors = [
+    'closed' => 'success',
+    'in_progress' => 'primary',
+    'todo' => 'warning',
+    'reopened' => 'info',
+    'await_release' => 'info',
+    'in_review' => 'info',
+    'default' => 'secondary'
+];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -200,6 +198,9 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <!-- TinyMCE WYSIWYG Editor -->
     <script src="https://cdn.jsdelivr.net/npm/tinymce@6.8.2/tinymce.min.js"></script>
+    <!-- DataTables CSS -->
+    <link href="https://cdn.datatables.net/1.13.4/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/responsive/2.4.1/css/responsive.bootstrap5.min.css" rel="stylesheet">
     <style>
         .task-header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -301,6 +302,47 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
             vertical-align: middle;
             margin-right: 8px;
         }
+        
+        /* Priority badge styles */
+        .priority-critical { background-color: #dc3545 !important; }
+        .priority-high { background-color: #fd7e14 !important; }
+        .priority-medium { background-color: #17a2b8 !important; }
+        .priority-low { background-color: #28a745 !important; }
+        
+        /* Badge enhancements */
+        .badge-pill {
+            border-radius: 10rem;
+            padding: 0.4em 0.8em;
+            font-size: 0.85em;
+        }
+        
+        /* DataTables custom styling */
+        .dataTables_wrapper .dataTables_length,
+        .dataTables_wrapper .dataTables_filter,
+        .dataTables_wrapper .dataTables_info,
+        .dataTables_wrapper .dataTables_processing,
+        .dataTables_wrapper .dataTables_paginate {
+            color: #333;
+        }
+        
+        .dataTables_wrapper .dataTables_filter input {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 4px 8px;
+        }
+        
+        .dataTables_wrapper .dataTables_paginate .paginate_button {
+            padding: 4px 10px;
+            margin: 0 2px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        .dataTables_wrapper .dataTables_paginate .paginate_button.current {
+            background: #007bff;
+            color: white !important;
+            border-color: #007bff;
+        }
     </style>
 </head>
 
@@ -322,9 +364,7 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
                                 Project: <?= htmlspecialchars($task['project_name']) ?>
                             </span>
                             <br>
-                            <span class="badge bg-<?=
-                                                    $task['priority'] == 'critical' ? 'danger' : ($task['priority'] == 'high' ? 'warning' : ($task['priority'] == 'medium' ? 'info' : 'success'))
-                                                    ?> fs-6 mt-2">
+                            <span class="badge badge-pill priority-<?= $task['priority'] ?> fs-6 mt-2">
                                 <?= ucfirst($task['priority']) ?> Priority
                             </span>
                         </div>
@@ -351,14 +391,12 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
                                 <div class="row">
                                     <div class="col-md-6">
                                         <p><strong>Status:</strong>
-                                            <span class="badge bg-secondary">
+                                            <span class="badge badge-pill bg-<?= $statusColors[$task['status']] ?? $statusColors['default'] ?>">
                                                 <?= ucfirst(str_replace('_', ' ', $task['status'])) ?>
                                             </span>
                                         </p>
                                         <p><strong>Priority:</strong>
-                                            <span class="badge bg-<?=
-                                                                    $task['priority'] == 'critical' ? 'danger' : ($task['priority'] == 'high' ? 'warning' : ($task['priority'] == 'medium' ? 'info' : 'success'))
-                                                                    ?>">
+                                            <span class="badge badge-pill priority-<?= $task['priority'] ?>">
                                                 <?= ucfirst($task['priority']) ?>
                                             </span>
                                         </p>
@@ -577,38 +615,84 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
                         <div class="card mb-4">
                             <div class="card-header d-flex justify-content-between align-items-center">
                                 <h5 class="mb-0">Related Bugs</h5>
-                                <span class="badge bg-danger"><?= count($bugs) ?></span>
+                                <?php 
+                                // Get bugs count for this task
+                                $bugs_count_query = "SELECT COUNT(*) as count FROM bugs WHERE task_id = :task_id";
+                                $bugs_count_stmt = $db->prepare($bugs_count_query);
+                                $bugs_count_stmt->bindParam(':task_id', $task_id);
+                                $bugs_count_stmt->execute();
+                                $bugs_count = $bugs_count_stmt->fetch(PDO::FETCH_ASSOC);
+                                ?>
+                                <span class="badge bg-danger"><?= $bugs_count['count'] ?? 0 ?></span>
                             </div>
                             <div class="card-body">
+                                <?php 
+                                // Get bugs for this task
+                                $bugs_query = "
+                                    SELECT b.*, p.name as project_name, u.name as created_by_name 
+                                    FROM bugs b
+                                    LEFT JOIN tasks t ON b.task_id = t.id
+                                    LEFT JOIN projects p ON t.project_id = p.id
+                                    LEFT JOIN users u ON b.created_by = u.id
+                                    WHERE b.task_id = :task_id
+                                    ORDER BY b.created_at DESC
+                                ";
+                                $bugs_stmt = $db->prepare($bugs_query);
+                                $bugs_stmt->bindParam(':task_id', $task_id);
+                                $bugs_stmt->execute();
+                                $bugs = $bugs_stmt->fetchAll(PDO::FETCH_ASSOC);
+                                ?>
+                                
                                 <?php if (empty($bugs)): ?>
                                     <p class="text-muted">No bugs reported for this task.</p>
                                 <?php else: ?>
-                                    <?php foreach ($bugs as $bug): ?>
-                                        <div class="card bug-card mb-2">
-                                            <div class="card-body py-2">
-                                                <h6 class="card-title mb-1"><?= htmlspecialchars($bug['name']) ?></h6>
-                                                <p class="card-text small mb-1"><?= substr(strip_tags($bug['description']), 0, 50) ?>...</p>
-                                                <div class="d-flex justify-content-between align-items-center">
-                                                    <span class="badge bg-<?=
-                                                                            $bug['priority'] == 'critical' ? 'danger' : ($bug['priority'] == 'high' ? 'warning' : ($bug['priority'] == 'medium' ? 'info' : 'success'))
-                                                                            ?>">
-                                                        <?= ucfirst($bug['priority']) ?>
-                                                    </span>
-                                                    <span class="badge bg-<?=
-                                                                            $bug['status'] == 'open' ? 'danger' : ($bug['status'] == 'in_progress' ? 'warning' : ($bug['status'] == 'resolved' ? 'info' : 'success'))
-                                                                            ?>">
-                                                        <?= ucfirst($bug['status']) ?>
-                                                    </span>
-                                                </div>
-                                                <a href="bug_details.php?id=<?= $bug['id'] ?>" class="stretched-link"></a>
-                                            </div>
-                                        </div>
-                                    <?php endforeach; ?>
+                                    <div class="table-responsive">
+                                        <table id="bugsTable" class="table table-striped table-hover w-100">
+                                            <thead>
+                                                <tr>
+                                                    <th>Bug Name</th>
+                                                    <th>Priority</th>
+                                                    <th>Status</th>
+                                                    <th>Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <?php foreach ($bugs as $bug): ?>
+                                                    <tr>
+                                                        <td>
+                                                            <strong><?= htmlspecialchars($bug['name']) ?></strong>
+                                                            <?php if ($bug['description']): ?>
+                                                                <br><small class="text-muted"><?= substr(strip_tags($bug['description']), 0, 30) ?>...</small>
+                                                            <?php endif; ?>
+                                                        </td>
+                                                        <td>
+                                                            <span class="badge badge-pill priority-<?= $bug['priority'] ?>">
+                                                                <?= ucfirst($bug['priority']) ?>
+                                                            </span>
+                                                        </td>
+                                                        <td>
+                                                            <span class="badge badge-pill bg-<?= 
+                                                                $bug['status'] == 'resolved' ? 'success' : 
+                                                                ($bug['status'] == 'in_progress' ? 'warning' : 'danger')
+                                                            ?>">
+                                                                <?= ucfirst(str_replace('_', ' ', $bug['status'])) ?>
+                                                            </span>
+                                                        </td>
+                                                        <td>
+                                                            <a href="bug_details.php?id=<?= $bug['id'] ?>" class="btn btn-sm btn-outline-primary">
+                                                                <i class="fas fa-eye"></i>
+                                                            </a>
+                                                        </td>
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 <?php endif; ?>
 
                                 <?php if ($_SESSION['user_role'] == 'manager' || $_SESSION['user_role'] == 'qa'): ?>
                                     <div class="mt-3">
-                                        <a href="bugs.php" class="btn btn-outline-primary btn-sm w-100">
+                                        <a href="bugs.php?task_id=<?= $task_id ?>" class="btn btn-outline-primary btn-sm w-100">
                                             <i class="fas fa-bug"></i> Report New Bug
                                         </a>
                                     </div>
@@ -662,10 +746,10 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
                                     $current_assignees = explode(',', $task['assignee_ids']);
                                     foreach ($developers as $dev):
                                     ?>
-                                        <option value="<?= $dev['id'] ?>"
+                                        <option value="<?= $dev['id'] ?>" 
                                             <?= in_array($dev['id'], $current_assignees) ? 'selected' : '' ?>
                                             style="padding: 8px;">
-                                            <img src="<?= $dev['image'] ?: getDefaultProfilePicture(20) ?>"
+                                            <img src="<?= $dev['image'] ?: getDefaultProfilePicture(20) ?>" 
                                                 class="rounded-circle me-2" width="20" height="20"
                                                 onerror="this.onerror=null; this.src='<?= getDefaultProfilePicture(20) ?>'"
                                                 style="vertical-align: middle;">
@@ -686,7 +770,16 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
         </div>
     <?php endif; ?>
 
+    <!-- jQuery (required for DataTables) -->
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <!-- Bootstrap Bundle with Popper -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- DataTables JS -->
+    <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.4/js/dataTables.bootstrap5.min.js"></script>
+    <script src="https://cdn.datatables.net/responsive/2.4.1/js/dataTables.responsive.min.js"></script>
+    <script src="https://cdn.datatables.net/responsive/2.4.1/js/responsive.bootstrap5.min.js"></script>
+    
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             tinymce.init({
@@ -697,6 +790,94 @@ $developers = $db->query("SELECT id, name, image FROM users WHERE role = 'develo
                 height: 300,
                 promotion: false,
                 branding: false
+            });
+            
+            // Initialize DataTable for bugs if table exists
+            if (document.getElementById('bugsTable')) {
+                $('#bugsTable').DataTable({
+                    responsive: true,
+                    pageLength: 5,
+                    lengthMenu: [[5, 10, 25, -1], [5, 10, 25, "All"]],
+                    order: [[0, 'asc']], // Sort by bug name ascending
+                    language: {
+                        search: "Search bugs:",
+                        lengthMenu: "Show _MENU_ bugs",
+                        info: "Showing _START_ to _END_ of _TOTAL_ bugs",
+                        paginate: {
+                            first: "First",
+                            last: "Last",
+                            next: "Next",
+                            previous: "Previous"
+                        }
+                    },
+                    columnDefs: [
+                        {
+                            targets: [0, 1, 2],
+                            orderable: true
+                        },
+                        {
+                            targets: [3], // Actions column
+                            orderable: false,
+                            searchable: false,
+                            width: "70px"
+                        }
+                    ]
+                });
+            }
+            
+            // Apply priority badge colors
+            const priorityBadges = document.querySelectorAll('.priority-critical, .priority-high, .priority-medium, .priority-low');
+            priorityBadges.forEach(badge => {
+                const priority = badge.textContent.trim().toLowerCase();
+                badge.className = 'badge badge-pill';
+                
+                switch(priority) {
+                    case 'critical':
+                        badge.classList.add('priority-critical');
+                        break;
+                    case 'high':
+                        badge.classList.add('priority-high');
+                        break;
+                    case 'medium':
+                        badge.classList.add('priority-medium');
+                        break;
+                    case 'low':
+                        badge.classList.add('priority-low');
+                        break;
+                }
+            });
+            
+            // Apply status badge colors
+            const statusBadges = document.querySelectorAll('span.badge[class*="bg-"]');
+            statusBadges.forEach(badge => {
+                const status = badge.textContent.trim().toLowerCase().replace(' ', '_');
+                const badgeClass = badge.className;
+                
+                // Remove existing background classes
+                badge.className = badgeClass.replace(/bg-\w+/g, '');
+                
+                // Add consistent status classes
+                switch(status) {
+                    case 'closed':
+                        badge.classList.add('bg-success');
+                        break;
+                    case 'in_progress':
+                        badge.classList.add('bg-primary');
+                        break;
+                    case 'todo':
+                        badge.classList.add('bg-warning');
+                        break;
+                    case 'reopened':
+                    case 'await_release':
+                    case 'in_review':
+                        badge.classList.add('bg-info');
+                        break;
+                    default:
+                        badge.classList.add('bg-secondary');
+                }
+                
+                // Ensure badge-pill class
+                badge.classList.add('badge-pill');
             });
         });
     </script>

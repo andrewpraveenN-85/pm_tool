@@ -13,12 +13,18 @@ $auth->requireRole(['manager', 'qa']);
 $notification = new Notification($db);
 $activityLogger = new ActivityLogger($db); // Initialize activity logger
 
+// Debug logging
+if ($_POST) {
+    error_log("POST data received: " . print_r($_POST, true));
+    error_log("FILES data: " . print_r($_FILES, true));
+}
+
 // Handle form submissions
 if ($_POST) {
     if (isset($_POST['create_bug'])) {
         // Form validation
         $errors = [];
-        
+
         // Required field validation
         $required_fields = ['name', 'description', 'project_id', 'task_id', 'priority', 'status'];
         foreach ($required_fields as $field) {
@@ -26,7 +32,7 @@ if ($_POST) {
                 $errors[] = ucfirst(str_replace('_', ' ', $field)) . " is required.";
             }
         }
-        
+
         // Validate project exists
         if (!empty($_POST['project_id'])) {
             $project_check = $db->prepare("SELECT id, name FROM projects WHERE id = ? AND status = 'active'");
@@ -36,7 +42,7 @@ if ($_POST) {
                 $errors[] = "Selected project does not exist or is not active.";
             }
         }
-        
+
         // Validate task exists and belongs to the selected project
         if (!empty($_POST['task_id']) && !empty($_POST['project_id'])) {
             $task_check = $db->prepare("SELECT id, name FROM tasks WHERE id = ? AND project_id = ?");
@@ -46,43 +52,50 @@ if ($_POST) {
                 $errors[] = "Selected task does not exist in the chosen project.";
             }
         }
-        
+
         // Validate dates if provided
         if (!empty($_POST['start_datetime']) && !empty($_POST['end_datetime'])) {
             $start_date = strtotime($_POST['start_datetime']);
             $end_date = strtotime($_POST['end_datetime']);
-            
+
             if ($end_date < $start_date) {
                 $errors[] = "End date cannot be earlier than start date.";
             }
         }
-        
+
         // Validate file uploads
         if (!empty($_FILES['attachments']['name'][0])) {
             $max_file_size = 10 * 1024 * 1024; // 10MB
-            $allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf', 
-                            'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                            'text/plain', 'application/zip'];
-            
+            $allowed_types = [
+                'image/jpeg',
+                'image/png',
+                'image/gif',
+                'application/pdf',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'text/plain',
+                'application/zip'
+            ];
+
             foreach ($_FILES['attachments']['tmp_name'] as $key => $tmp_name) {
                 if ($_FILES['attachments']['error'][$key] === UPLOAD_ERR_OK) {
                     // Check file size
                     if ($_FILES['attachments']['size'][$key] > $max_file_size) {
                         $errors[] = "File '{$_FILES['attachments']['name'][$key]}' exceeds maximum size of 10MB.";
                     }
-                    
+
                     // Check file type
                     $finfo = finfo_open(FILEINFO_MIME_TYPE);
                     $mime_type = finfo_file($finfo, $tmp_name);
                     finfo_close($finfo);
-                    
+
                     if (!in_array($mime_type, $allowed_types)) {
                         $errors[] = "File '{$_FILES['attachments']['name'][$key]}' has an invalid file type.";
                     }
                 }
             }
         }
-        
+
         if (empty($errors)) {
             $name = $_POST['name'];
             $description = $_POST['description'];
@@ -92,13 +105,13 @@ if ($_POST) {
             $status = $_POST['status'];
             $start_datetime = !empty($_POST['start_datetime']) ? $_POST['start_datetime'] : null;
             $end_datetime = !empty($_POST['end_datetime']) ? $_POST['end_datetime'] : null;
-            
+
             try {
                 $db->beginTransaction();
-                
+
                 $query = "INSERT INTO bugs (name, description, task_id, priority, status, start_datetime, end_datetime, created_by) 
                           VALUES (:name, :description, :task_id, :priority, :status, :start_datetime, :end_datetime, :created_by)";
-                
+
                 $stmt = $db->prepare($query);
                 $stmt->bindParam(':name', $name);
                 $stmt->bindParam(':description', $description);
@@ -109,9 +122,9 @@ if ($_POST) {
                 $stmt->bindParam(':end_datetime', $end_datetime);
                 $stmt->bindParam(':created_by', $_SESSION['user_id']);
                 $stmt->execute();
-                
+
                 $bug_id = $db->lastInsertId();
-                
+
                 // Handle file uploads for the bug
                 $file_count = 0;
                 if (!empty($_FILES['attachments']['name'][0])) {
@@ -119,14 +132,14 @@ if ($_POST) {
                     if (!is_dir($upload_dir)) {
                         mkdir($upload_dir, 0777, true);
                     }
-                    
+
                     foreach ($_FILES['attachments']['tmp_name'] as $key => $tmp_name) {
                         if ($_FILES['attachments']['error'][$key] === UPLOAD_ERR_OK) {
                             $original_name = $_FILES['attachments']['name'][$key];
                             $file_extension = pathinfo($original_name, PATHINFO_EXTENSION);
                             $filename = 'bug_' . $bug_id . '_' . uniqid() . '.' . $file_extension;
                             $target_file = $upload_dir . $filename;
-                            
+
                             if (move_uploaded_file($tmp_name, $target_file)) {
                                 $query = "INSERT INTO attachments (entity_type, entity_id, filename, original_name, file_path, file_size, file_type, uploaded_by) 
                                           VALUES ('bug', :entity_id, :filename, :original_name, :file_path, :file_size, :file_type, :uploaded_by)";
@@ -144,9 +157,9 @@ if ($_POST) {
                         }
                     }
                 }
-                
+
                 $db->commit();
-                
+
                 // Log the activity
                 $activity_details = [
                     'bug_id' => $bug_id,
@@ -159,7 +172,7 @@ if ($_POST) {
                     'status' => $status,
                     'files_uploaded' => $file_count
                 ];
-                
+
                 $activityLogger->logActivity(
                     $_SESSION['user_id'],
                     'bug_created',
@@ -167,20 +180,24 @@ if ($_POST) {
                     json_encode($activity_details),
                     $bug_id
                 );
-                
+
                 // Send bug report notification
                 $notification->createBugReportNotification($bug_id);
-                
+
                 $success = "Bug reported successfully!";
-                
+
                 // Clear form data after successful submission
                 $_POST = array();
                 
+                // Log success
+                error_log("Bug created successfully with ID: " . $bug_id);
             } catch (Exception $e) {
                 $db->rollBack();
                 $error = "Failed to report bug: " . $e->getMessage();
-                
+
                 // Log the error
+                error_log("Bug creation failed: " . $e->getMessage());
+                
                 $activityLogger->logActivity(
                     $_SESSION['user_id'],
                     'bug_create_error',
@@ -191,9 +208,10 @@ if ($_POST) {
             }
         } else {
             $error = implode("<br>", $errors);
+            error_log("Form validation errors: " . $error);
         }
     }
-    
+
     // Handle bug update
     if (isset($_POST['update_bug'])) {
         $bug_id = $_POST['bug_id'];
@@ -205,14 +223,14 @@ if ($_POST) {
         $status = $_POST['status'];
         $start_datetime = !empty($_POST['start_datetime']) ? $_POST['start_datetime'] : null;
         $end_datetime = !empty($_POST['end_datetime']) ? $_POST['end_datetime'] : null;
-        
+
         // Get current bug data for comparison
         $current_bug_query = "SELECT * FROM bugs WHERE id = :id";
         $current_bug_stmt = $db->prepare($current_bug_query);
         $current_bug_stmt->bindParam(':id', $bug_id);
         $current_bug_stmt->execute();
         $current_bug = $current_bug_stmt->fetch(PDO::FETCH_ASSOC);
-        
+
         // Validate required fields
         $errors = [];
         $required_fields = ['name', 'description', 'project_id', 'task_id', 'priority', 'status'];
@@ -221,47 +239,54 @@ if ($_POST) {
                 $errors[] = ucfirst(str_replace('_', ' ', $field)) . " is required.";
             }
         }
-        
+
         // Validate dates if provided
         if (!empty($start_datetime) && !empty($end_datetime)) {
             $start_date = strtotime($start_datetime);
             $end_date = strtotime($end_datetime);
-            
+
             if ($end_date < $start_date) {
                 $errors[] = "End date cannot be earlier than start date.";
             }
         }
-        
+
         // Validate new file uploads
         if (!empty($_FILES['new_attachments']['name'][0])) {
             $max_file_size = 10 * 1024 * 1024; // 10MB
-            $allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'application/pdf', 
-                            'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                            'text/plain', 'application/zip'];
-            
+            $allowed_types = [
+                'image/jpeg',
+                'image/png',
+                'image/gif',
+                'application/pdf',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'text/plain',
+                'application/zip'
+            ];
+
             foreach ($_FILES['new_attachments']['tmp_name'] as $key => $tmp_name) {
                 if ($_FILES['new_attachments']['error'][$key] === UPLOAD_ERR_OK) {
                     // Check file size
                     if ($_FILES['new_attachments']['size'][$key] > $max_file_size) {
                         $errors[] = "File '{$_FILES['new_attachments']['name'][$key]}' exceeds maximum size of 10MB.";
                     }
-                    
+
                     // Check file type
                     $finfo = finfo_open(FILEINFO_MIME_TYPE);
                     $mime_type = finfo_file($finfo, $tmp_name);
                     finfo_close($finfo);
-                    
+
                     if (!in_array($mime_type, $allowed_types)) {
                         $errors[] = "File '{$_FILES['new_attachments']['name'][$key]}' has an invalid file type.";
                     }
                 }
             }
         }
-        
+
         if (empty($errors)) {
             try {
                 $db->beginTransaction();
-                
+
                 // Update bug
                 $query = "UPDATE bugs SET 
                           name = :name, 
@@ -273,7 +298,7 @@ if ($_POST) {
                           end_datetime = :end_datetime,
                           updated_at = NOW()
                           WHERE id = :id";
-                
+
                 $stmt = $db->prepare($query);
                 $stmt->bindParam(':name', $name);
                 $stmt->bindParam(':description', $description);
@@ -284,7 +309,7 @@ if ($_POST) {
                 $stmt->bindParam(':end_datetime', $end_datetime);
                 $stmt->bindParam(':id', $bug_id);
                 $stmt->execute();
-                
+
                 // Handle new file uploads
                 $new_file_count = 0;
                 if (!empty($_FILES['new_attachments']['name'][0])) {
@@ -292,14 +317,14 @@ if ($_POST) {
                     if (!is_dir($upload_dir)) {
                         mkdir($upload_dir, 0777, true);
                     }
-                    
+
                     foreach ($_FILES['new_attachments']['tmp_name'] as $key => $tmp_name) {
                         if ($_FILES['new_attachments']['error'][$key] === UPLOAD_ERR_OK) {
                             $original_name = $_FILES['new_attachments']['name'][$key];
                             $file_extension = pathinfo($original_name, PATHINFO_EXTENSION);
                             $filename = 'bug_' . $bug_id . '_' . uniqid() . '.' . $file_extension;
                             $target_file = $upload_dir . $filename;
-                            
+
                             if (move_uploaded_file($tmp_name, $target_file)) {
                                 $query = "INSERT INTO attachments (entity_type, entity_id, filename, original_name, file_path, file_size, file_type, uploaded_by) 
                                           VALUES ('bug', :entity_id, :filename, :original_name, :file_path, :file_size, :file_type, :uploaded_by)";
@@ -317,9 +342,9 @@ if ($_POST) {
                         }
                     }
                 }
-                
+
                 $db->commit();
-                
+
                 // Prepare activity details
                 $changes = [];
                 if ($current_bug['name'] != $name) $changes['name'] = ['from' => $current_bug['name'], 'to' => $name];
@@ -329,14 +354,14 @@ if ($_POST) {
                 if ($current_bug['status'] != $status) $changes['status'] = ['from' => $current_bug['status'], 'to' => $status];
                 if ($current_bug['start_datetime'] != $start_datetime) $changes['start_date'] = ['from' => $current_bug['start_datetime'], 'to' => $start_datetime];
                 if ($current_bug['end_datetime'] != $end_datetime) $changes['end_date'] = ['from' => $current_bug['end_datetime'], 'to' => $end_datetime];
-                
+
                 $activity_details = [
                     'bug_id' => $bug_id,
                     'bug_name' => $name,
                     'changes' => $changes,
                     'new_files_uploaded' => $new_file_count
                 ];
-                
+
                 // Log the activity
                 $activityLogger->logActivity(
                     $_SESSION['user_id'],
@@ -345,16 +370,15 @@ if ($_POST) {
                     json_encode($activity_details),
                     $bug_id
                 );
-                
+
                 // Send bug update notification
                 $notification->createBugUpdateNotification($bug_id);
-                
+
                 $success = "Bug updated successfully!";
-                
             } catch (Exception $e) {
                 $db->rollBack();
                 $error = "Failed to update bug: " . $e->getMessage();
-                
+
                 // Log the error
                 $activityLogger->logActivity(
                     $_SESSION['user_id'],
@@ -368,21 +392,21 @@ if ($_POST) {
             $error = implode("<br>", $errors);
         }
     }
-    
+
     if (isset($_POST['update_bug_status'])) {
         $bug_id = $_POST['bug_id'];
         $status = $_POST['status'];
-        
+
         // Get current bug status and name
         $current_bug_query = "SELECT name, status FROM bugs WHERE id = :id";
         $current_bug_stmt = $db->prepare($current_bug_query);
         $current_bug_stmt->bindParam(':id', $bug_id);
         $current_bug_stmt->execute();
         $current_bug = $current_bug_stmt->fetch(PDO::FETCH_ASSOC);
-        
+
         try {
             $db->beginTransaction();
-            
+
             // Get bug details for notification
             $bug_query = "
                 SELECT b.name, b.priority, b.task_id, t.created_by as task_manager_id, 
@@ -397,16 +421,16 @@ if ($_POST) {
             $bug_stmt->bindParam(':bug_id', $bug_id);
             $bug_stmt->execute();
             $bug = $bug_stmt->fetch(PDO::FETCH_ASSOC);
-            
+
             // Update bug status
             $query = "UPDATE bugs SET status = :status, updated_at = NOW() WHERE id = :id";
             $stmt = $db->prepare($query);
             $stmt->bindParam(':status', $status);
             $stmt->bindParam(':id', $bug_id);
-            
+
             if ($stmt->execute()) {
                 $db->commit();
-                
+
                 // Log the status change activity
                 $activity_details = [
                     'bug_id' => $bug_id,
@@ -416,7 +440,7 @@ if ($_POST) {
                         'to' => $status
                     ]
                 ];
-                
+
                 $activityLogger->logActivity(
                     $_SESSION['user_id'],
                     'bug_status_updated',
@@ -424,13 +448,13 @@ if ($_POST) {
                     json_encode($activity_details),
                     $bug_id
                 );
-                
+
                 // Send bug status update notification
                 if ($bug) {
                     $assignee_ids = !empty($bug['assignee_ids']) ? explode(',', $bug['assignee_ids']) : [];
                     $notification->createBugStatusUpdateNotification($bug_id, $status, $assignee_ids, $bug['task_manager_id']);
                 }
-                
+
                 $success = "Bug status updated successfully!";
             } else {
                 throw new Exception("Failed to update bug status");
@@ -438,7 +462,7 @@ if ($_POST) {
         } catch (Exception $e) {
             $db->rollBack();
             $error = "Failed to update bug status: " . $e->getMessage();
-            
+
             // Log the error
             $activityLogger->logActivity(
                 $_SESSION['user_id'],
@@ -449,12 +473,12 @@ if ($_POST) {
             );
         }
     }
-    
+
     // Handle attachment deletion
     if (isset($_POST['delete_attachment'])) {
         $attachment_id = $_POST['attachment_id'];
         $bug_id = $_POST['bug_id'];
-        
+
         try {
             // Get attachment details
             $attachment_query = "SELECT file_path, original_name FROM attachments WHERE id = :id AND entity_type = 'bug'";
@@ -462,26 +486,26 @@ if ($_POST) {
             $attachment_stmt->bindParam(':id', $attachment_id);
             $attachment_stmt->execute();
             $attachment = $attachment_stmt->fetch(PDO::FETCH_ASSOC);
-            
+
             if ($attachment) {
                 // Delete file from server
                 if (file_exists($attachment['file_path'])) {
                     unlink($attachment['file_path']);
                 }
-                
+
                 // Delete record from database
                 $delete_query = "DELETE FROM attachments WHERE id = :id";
                 $delete_stmt = $db->prepare($delete_query);
                 $delete_stmt->bindParam(':id', $attachment_id);
                 $delete_stmt->execute();
-                
+
                 // Log the activity
                 $activity_details = [
                     'bug_id' => $bug_id,
                     'attachment_name' => $attachment['original_name'],
                     'attachment_path' => $attachment['file_path']
                 ];
-                
+
                 $activityLogger->logActivity(
                     $_SESSION['user_id'],
                     'bug_attachment_deleted',
@@ -489,12 +513,12 @@ if ($_POST) {
                     json_encode($activity_details),
                     $bug_id
                 );
-                
+
                 $success = "Attachment deleted successfully!";
             }
         } catch (Exception $e) {
             $error = "Failed to delete attachment: " . $e->getMessage();
-            
+
             // Log the error
             $activityLogger->logActivity(
                 $_SESSION['user_id'],
@@ -530,9 +554,7 @@ if (!empty($where_conditions)) {
     $where_clause = "WHERE " . implode(" AND ", $where_conditions);
 }
 
-// Get bugs based on user role with filters
-if ($_SESSION['user_role'] == 'manager') {
-    $bugs_query = "
+$bugs_query = "
         SELECT b.*, t.name as task_name, p.name as project_name, u.name as created_by_name, p.id as project_id
         FROM bugs b
         LEFT JOIN tasks t ON b.task_id = t.id
@@ -541,17 +563,6 @@ if ($_SESSION['user_role'] == 'manager') {
         $where_clause
         ORDER BY b.created_at DESC
     ";
-} else {
-    $bugs_query = "
-        SELECT b.*, t.name as task_name, p.name as project_name, u.name as created_by_name, p.id as project_id
-        FROM bugs b
-        LEFT JOIN tasks t ON b.task_id = t.id
-        LEFT JOIN projects p ON t.project_id = p.id
-        LEFT JOIN users u ON b.created_by = u.id
-        $where_clause
-        ORDER BY b.created_at DESC
-    ";
-}
 
 $stmt = $db->prepare($bugs_query);
 foreach ($query_params as $key => $value) {
@@ -606,7 +617,7 @@ $edit_bug = null;
 $bug_attachments = [];
 if (isset($_GET['edit_bug'])) {
     $bug_id = $_GET['edit_bug'];
-    
+
     $bug_query = "SELECT b.*, t.name as task_name, p.name as project_name, p.id as project_id 
                   FROM bugs b 
                   LEFT JOIN tasks t ON b.task_id = t.id 
@@ -616,7 +627,7 @@ if (isset($_GET['edit_bug'])) {
     $bug_stmt->bindParam(':id', $bug_id);
     $bug_stmt->execute();
     $edit_bug = $bug_stmt->fetch(PDO::FETCH_ASSOC);
-    
+
     if ($edit_bug) {
         // Get attachments
         $attachments_query = "SELECT * FROM attachments WHERE entity_type = 'bug' AND entity_id = :bug_id ORDER BY uploaded_at DESC";
@@ -629,6 +640,7 @@ if (isset($_GET['edit_bug'])) {
 ?>
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -646,26 +658,32 @@ if (isset($_GET['edit_bug'])) {
             margin-bottom: 8px;
             background: #f8f9fa;
         }
+
         .attachment-item:hover {
             background: #e9ecef;
         }
+
         .activity-log {
             max-height: 300px;
             overflow-y: auto;
         }
+
         .activity-item {
             padding: 8px;
             border-bottom: 1px solid #dee2e6;
             font-size: 0.9rem;
         }
+
         .activity-item:last-child {
             border-bottom: none;
         }
+
         .activity-icon {
             width: 24px;
             text-align: center;
             margin-right: 8px;
         }
+
         /* DataTables custom styling */
         .dataTables_wrapper .dataTables_length,
         .dataTables_wrapper .dataTables_filter,
@@ -674,50 +692,64 @@ if (isset($_GET['edit_bug'])) {
         .dataTables_wrapper .dataTables_paginate {
             color: #333;
         }
+
         .dataTables_wrapper .dataTables_filter input {
             border: 1px solid #ddd;
             border-radius: 4px;
             padding: 4px 8px;
         }
+
         .dataTables_wrapper .dataTables_paginate .paginate_button {
             padding: 4px 10px;
             margin: 0 2px;
             border: 1px solid #ddd;
             border-radius: 4px;
         }
+
         .dataTables_wrapper .dataTables_paginate .paginate_button.current {
             background: #007bff;
             color: white !important;
             border-color: #007bff;
         }
+        
+        .status-open { background-color: #dc3545 !important; }
+        .status-in_progress { background-color: #ffc107 !important; }
+        .status-resolved { background-color: #0dcaf0 !important; }
+        .status-closed { background-color: #198754 !important; }
+        
+        .priority-critical { background-color: #dc3545 !important; }
+        .priority-high { background-color: #fd7e14 !important; }
+        .priority-medium { background-color: #0dcaf0 !important; }
+        .priority-low { background-color: #6c757d !important; }
     </style>
     <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        tinymce.init({
-            selector: 'textarea.wysiwyg',
-            plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
-            toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
-            menubar: false,
-            height: 300,
-            promotion: false,
-            branding: false
-        });
-        
-        // Handle attachment deletion
-        const deleteAttachmentButtons = document.querySelectorAll('.delete-attachment');
-        deleteAttachmentButtons.forEach(button => {
-            button.addEventListener('click', function(e) {
-                if (!confirm('Are you sure you want to delete this attachment?')) {
-                    e.preventDefault();
-                }
+        document.addEventListener('DOMContentLoaded', function() {
+            tinymce.init({
+                selector: 'textarea.wysiwyg',
+                plugins: 'anchor autolink charmap codesample emoticons image link lists media searchreplace table visualblocks wordcount',
+                toolbar: 'undo redo | blocks fontfamily fontsize | bold italic underline strikethrough | link image media table | align lineheight | numlist bullist indent outdent | emoticons charmap | removeformat',
+                menubar: false,
+                height: 300,
+                promotion: false,
+                branding: false
+            });
+
+            // Handle attachment deletion
+            const deleteAttachmentButtons = document.querySelectorAll('.delete-attachment');
+            deleteAttachmentButtons.forEach(button => {
+                button.addEventListener('click', function(e) {
+                    if (!confirm('Are you sure you want to delete this attachment?')) {
+                        e.preventDefault();
+                    }
+                });
             });
         });
-    });
     </script>
 </head>
+
 <body>
     <?php include 'includes/header.php'; ?>
-    
+
     <div class="container-fluid mt-4">
         <div class="row">
             <div class="col-12">
@@ -729,11 +761,17 @@ if (isset($_GET['edit_bug'])) {
                 </div>
 
                 <?php if (isset($success)): ?>
-                    <div class="alert alert-success"><?= $success ?></div>
+                    <div class="alert alert-success alert-dismissible fade show" role="alert">
+                        <?= $success ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
                 <?php endif; ?>
-                
+
                 <?php if (isset($error)): ?>
-                    <div class="alert alert-danger"><?= $error ?></div>
+                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        <?= $error ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
                 <?php endif; ?>
 
                 <!-- Filter Section -->
@@ -741,9 +779,9 @@ if (isset($_GET['edit_bug'])) {
                     <div class="card-header">
                         <div class="d-flex justify-content-between align-items-center">
                             <h5 class="mb-0">Filters</h5>
-                            <a href="?view_activities=<?= isset($_GET['view_activities']) && $_GET['view_activities'] == 'true' ? 'false' : 'true' ?>" 
-                               class="btn btn-sm btn-outline-info">
-                                <i class="fas fa-history"></i> 
+                            <a href="?view_activities=<?= isset($_GET['view_activities']) && $_GET['view_activities'] == 'true' ? 'false' : 'true' ?>"
+                                class="btn btn-sm btn-outline-info">
+                                <i class="fas fa-history"></i>
                                 <?= isset($_GET['view_activities']) && $_GET['view_activities'] == 'true' ? 'Hide Activities' : 'Show Activities' ?>
                             </a>
                         </div>
@@ -766,10 +804,10 @@ if (isset($_GET['edit_bug'])) {
                                 <label class="form-label">Task</label>
                                 <select class="form-select" name="task_filter" id="taskFilter" onchange="this.form.submit()">
                                     <option value="">All Tasks</option>
-                                    <?php 
+                                    <?php
                                     $filtered_tasks = $all_tasks;
                                     if (!empty($project_filter)) {
-                                        $filtered_tasks = array_filter($all_tasks, function($task) use ($project_filter) {
+                                        $filtered_tasks = array_filter($all_tasks, function ($task) use ($project_filter) {
                                             return $task['project_id'] == $project_filter;
                                         });
                                     }
@@ -781,8 +819,8 @@ if (isset($_GET['edit_bug'])) {
                                 </select>
                             </div>
                             <div class="col-md-4 d-flex align-items-end">
-                                <a href="bugs.php<?= isset($_GET['view_activities']) && $_GET['view_activities'] == 'true' ? '?view_activities=true' : '' ?>" 
-                                   class="btn btn-outline-secondary">Clear Filters</a>
+                                <a href="bugs.php<?= isset($_GET['view_activities']) && $_GET['view_activities'] == 'true' ? '?view_activities=true' : '' ?>"
+                                    class="btn btn-outline-secondary">Clear Filters</a>
                             </div>
                         </form>
                     </div>
@@ -792,6 +830,7 @@ if (isset($_GET['edit_bug'])) {
                     <table id="bugsTable" class="table table-striped table-hover w-100">
                         <thead class="table-dark">
                             <tr>
+                                <th>ID</th>
                                 <th>Bug Name</th>
                                 <th>Task</th>
                                 <th>Project</th>
@@ -805,66 +844,59 @@ if (isset($_GET['edit_bug'])) {
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($bugs as $bug): 
+                            <?php foreach ($bugs as $bug):
                                 $attachments_count = $db->query("SELECT COUNT(*) FROM attachments WHERE entity_type = 'bug' AND entity_id = " . $bug['id'])->fetchColumn();
                             ?>
-                            <tr>
-                                <td>
-                                    <strong><?= htmlspecialchars($bug['name']) ?></strong>
-                                    <?php if ($bug['description']): ?>
-                                        <br><small class="text-muted"><?= substr(strip_tags($bug['description']), 0, 50) ?>...</small>
-                                    <?php endif; ?>
-                                </td>
-                                <td><?= htmlspecialchars($bug['task_name']) ?></td>
-                                <td><?= htmlspecialchars($bug['project_name']) ?></td>
-                                <td>
-                                    <span class="badge bg-<?= 
-                                        $bug['priority'] == 'critical' ? 'danger' : 
-                                        ($bug['priority'] == 'high' ? 'warning' : 
-                                        ($bug['priority'] == 'medium' ? 'info' : 'success')) 
-                                    ?>">
-                                        <?= ucfirst($bug['priority']) ?>
-                                    </span>
-                                </td>
-                                <td>
-                                    <span class="badge bg-<?= 
-                                        $bug['status'] == 'open' ? 'danger' : 
-                                        ($bug['status'] == 'in_progress' ? 'warning' : 
-                                        ($bug['status'] == 'resolved' ? 'info' : 'success')) 
-                                    ?>">
-                                        <?= ucfirst(str_replace('_', ' ', $bug['status'])) ?>
-                                    </span>
-                                </td>
-                                <td><?= htmlspecialchars($bug['created_by_name']) ?></td>
-                                <td><?= $bug['start_datetime'] ? date('M j, Y', strtotime($bug['start_datetime'])) : '-' ?></td>
-                                <td><?= $bug['end_datetime'] ? date('M j, Y', strtotime($bug['end_datetime'])) : '-' ?></td>
-                                <td>
-                                    <?php if ($attachments_count > 0): ?>
-                                        <span class="badge bg-info">
-                                            <i class="fas fa-paperclip"></i> <?= $attachments_count ?>
-                                        </span>
-                                    <?php else: ?>
-                                        <span class="text-muted">-</span>
-                                    <?php endif; ?>
-                                </td>
-                                <td>
-                                    <div class="btn-group">
-                                        <button class="btn btn-sm btn-outline-warning update-bug-status" 
-                                                data-bug-id="<?= $bug['id'] ?>" 
-                                                data-current-status="<?= $bug['status'] ?>">
-                                            <i class="fas fa-sync"></i> Status
-                                        </button>
-                                        <a href="bug_details.php?id=<?= $bug['id'] ?>" class="btn btn-sm btn-outline-primary">
-                                            <i class="fas fa-eye"></i> View
-                                        </a>
-                                        <?php if ($_SESSION['user_role'] == 'manager' || $_SESSION['user_role'] == 'qa'): ?>
-                                        <a href="?edit_bug=<?= $bug['id'] ?>" class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#editBugModal">
-                                            <i class="fas fa-edit"></i> Edit
-                                        </a>
+                                <tr>
+                                    <td><?= $bug['id'] ?></td>
+                                    <td>
+                                        <strong><?= htmlspecialchars($bug['name']) ?></strong>
+                                        <?php if ($bug['description']): ?>
+                                            <br><small class="text-muted"><?= substr(strip_tags($bug['description']), 0, 50) ?>...</small>
                                         <?php endif; ?>
-                                    </div>
-                                </td>
-                            </tr>
+                                    </td>
+                                    <td><?= htmlspecialchars($bug['task_name']) ?></td>
+                                    <td><?= htmlspecialchars($bug['project_name']) ?></td>
+                                    <td>
+                                        <span class="badge priority-<?= $bug['priority'] ?>">
+                                            <?= ucfirst($bug['priority']) ?>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="badge status-<?= $bug['status'] ?>">
+                                            <?= ucfirst(str_replace('_', ' ', $bug['status'])) ?>
+                                        </span>
+                                    </td>
+                                    <td><?= htmlspecialchars($bug['created_by_name']) ?></td>
+                                    <td><?= $bug['start_datetime'] ? date('M j, Y', strtotime($bug['start_datetime'])) : '-' ?></td>
+                                    <td><?= $bug['end_datetime'] ? date('M j, Y', strtotime($bug['end_datetime'])) : '-' ?></td>
+                                    <td>
+                                        <?php if ($attachments_count > 0): ?>
+                                            <span class="badge bg-info">
+                                                <i class="fas fa-paperclip"></i> <?= $attachments_count ?>
+                                            </span>
+                                        <?php else: ?>
+                                            <span class="text-muted">-</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <div class="btn-group">
+                                            <button class="btn btn-sm btn-outline-warning update-bug-status"
+                                                data-bug-id="<?= $bug['id'] ?>"
+                                                data-current-status="<?= $bug['status'] ?>">
+                                                <i class="fas fa-sync"></i> Status
+                                            </button>
+                                            <a href="bug_details.php?id=<?= $bug['id'] ?>" class="btn btn-sm btn-outline-primary">
+                                                <i class="fas fa-eye"></i> View
+                                            </a>
+                                            <?php if ($_SESSION['user_role'] == 'manager' || $_SESSION['user_role'] == 'qa'): ?>
+                                                <a href="?edit_bug=<?= $bug['id'] ?>" class="btn btn-sm btn-outline-info" data-bs-toggle="modal" data-bs-target="#editBugModal">
+                                                    <i class="fas fa-edit"></i> Edit
+                                                </a>
+                                            <?php endif; ?>
+                                        </div>
+                                    </td>
+                                </tr>
                             <?php endforeach; ?>
                         </tbody>
                     </table>
@@ -881,7 +913,7 @@ if (isset($_GET['edit_bug'])) {
                     <h5 class="modal-title">Report New Bug</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form method="POST" enctype="multipart/form-data" id="createBugForm" onsubmit="return validateBugForm()">
+                <form method="POST" enctype="multipart/form-data" id="createBugForm">
                     <div class="modal-body">
                         <div class="row">
                             <div class="col-md-6 mb-3">
@@ -902,7 +934,7 @@ if (isset($_GET['edit_bug'])) {
                                 <div class="invalid-feedback">Please select a project.</div>
                             </div>
                         </div>
-                        
+
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Task <span class="text-danger">*</span></label>
@@ -927,7 +959,7 @@ if (isset($_GET['edit_bug'])) {
                                 <div class="invalid-feedback">Please select a priority.</div>
                             </div>
                         </div>
-                        
+
                         <div class="mb-3">
                             <label class="form-label">Description <span class="text-danger">*</span></label>
                             <textarea class="form-control wysiwyg" name="description" id="bug_description" required><?= isset($_POST['description']) ? htmlspecialchars($_POST['description']) : '' ?></textarea>
@@ -936,13 +968,13 @@ if (isset($_GET['edit_bug'])) {
 
                         <div class="mb-3">
                             <label class="form-label">Attachments</label>
-                            <input type="file" class="form-control" name="attachments[]" id="bug_attachments" multiple 
-                                   accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip" 
-                                   onchange="validateFiles(this)">
+                            <input type="file" class="form-control" name="attachments[]" id="bug_attachments" multiple
+                                accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip"
+                                onchange="validateFiles(this)">
                             <small class="text-muted">You can select multiple files. Maximum 10MB per file.</small>
                             <div class="invalid-feedback" id="fileError"></div>
                         </div>
-                        
+
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Status <span class="text-danger">*</span></label>
@@ -955,7 +987,7 @@ if (isset($_GET['edit_bug'])) {
                                 <div class="invalid-feedback">Please select a status.</div>
                             </div>
                         </div>
-                        
+
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Start Date & Time</label>
@@ -986,120 +1018,120 @@ if (isset($_GET['edit_bug'])) {
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <?php if ($edit_bug): ?>
-                <form method="POST" enctype="multipart/form-data">
-                    <input type="hidden" name="bug_id" value="<?= $edit_bug['id'] ?>">
-                    <div class="modal-body">
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label">Bug Name <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" name="name" required maxlength="255" 
-                                       value="<?= htmlspecialchars($edit_bug['name']) ?>">
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label">Project <span class="text-danger">*</span></label>
-                                <select class="form-select" name="project_id" id="editProjectSelect" required onchange="updateEditTaskDropdown()">
-                                    <option value="">Select Project</option>
-                                    <?php foreach ($projects as $project): ?>
-                                        <option value="<?= $project['id'] ?>" <?= $edit_bug['project_id'] == $project['id'] ? 'selected' : '' ?>>
-                                            <?= htmlspecialchars($project['name']) ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label">Task <span class="text-danger">*</span></label>
-                                <select class="form-select" name="task_id" id="editTaskSelect" required>
-                                    <option value="">Select Task</option>
-                                    <?php foreach ($form_tasks as $task): ?>
-                                        <option value="<?= $task['id'] ?>" <?= $edit_bug['task_id'] == $task['id'] ? 'selected' : '' ?>>
-                                            <?= htmlspecialchars($task['name']) ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label">Priority <span class="text-danger">*</span></label>
-                                <select class="form-select" name="priority" required>
-                                    <option value="low" <?= $edit_bug['priority'] == 'low' ? 'selected' : '' ?>>Low</option>
-                                    <option value="medium" <?= $edit_bug['priority'] == 'medium' ? 'selected' : '' ?>>Medium</option>
-                                    <option value="high" <?= $edit_bug['priority'] == 'high' ? 'selected' : '' ?>>High</option>
-                                    <option value="critical" <?= $edit_bug['priority'] == 'critical' ? 'selected' : '' ?>>Critical</option>
-                                </select>
-                            </div>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <label class="form-label">Description <span class="text-danger">*</span></label>
-                            <textarea class="form-control wysiwyg" name="description" required><?= htmlspecialchars($edit_bug['description']) ?></textarea>
-                        </div>
-
-                        <!-- Existing Attachments -->
-                        <?php if (!empty($bug_attachments)): ?>
-                        <div class="mb-3">
-                            <label class="form-label">Existing Attachments</label>
-                            <div class="attachments-container">
-                                <?php foreach ($bug_attachments as $attachment): ?>
-                                <div class="attachment-item d-flex justify-content-between align-items-center">
-                                    <div>
-                                        <i class="fas fa-paperclip me-2"></i>
-                                        <a href="<?= $attachment['file_path'] ?>" target="_blank" class="text-decoration-none">
-                                            <?= htmlspecialchars($attachment['original_name']) ?>
-                                        </a>
-                                        <small class="text-muted ms-2">(<?= round($attachment['file_size'] / 1024, 2) ?> KB)</small>
-                                    </div>
-                                    <form method="POST" class="d-inline">
-                                        <input type="hidden" name="attachment_id" value="<?= $attachment['id'] ?>">
-                                        <input type="hidden" name="bug_id" value="<?= $edit_bug['id'] ?>">
-                                        <button type="submit" name="delete_attachment" class="btn btn-sm btn-danger delete-attachment">
-                                            <i class="fas fa-trash"></i>
-                                        </button>
-                                    </form>
+                    <form method="POST" enctype="multipart/form-data">
+                        <input type="hidden" name="bug_id" value="<?= $edit_bug['id'] ?>">
+                        <div class="modal-body">
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Bug Name <span class="text-danger">*</span></label>
+                                    <input type="text" class="form-control" name="name" required maxlength="255"
+                                        value="<?= htmlspecialchars($edit_bug['name']) ?>">
                                 </div>
-                                <?php endforeach; ?>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Project <span class="text-danger">*</span></label>
+                                    <select class="form-select" name="project_id" id="editProjectSelect" required onchange="updateEditTaskDropdown()">
+                                        <option value="">Select Project</option>
+                                        <?php foreach ($projects as $project): ?>
+                                            <option value="<?= $project['id'] ?>" <?= $edit_bug['project_id'] == $project['id'] ? 'selected' : '' ?>>
+                                                <?= htmlspecialchars($project['name']) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
                             </div>
-                        </div>
-                        <?php endif; ?>
 
-                        <div class="mb-3">
-                            <label class="form-label">Add New Attachments</label>
-                            <input type="file" class="form-control" name="new_attachments[]" multiple 
-                                   accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip">
-                            <small class="text-muted">You can select multiple files. Maximum 10MB per file.</small>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label">Status <span class="text-danger">*</span></label>
-                                <select class="form-select" name="status" required>
-                                    <option value="open" <?= $edit_bug['status'] == 'open' ? 'selected' : '' ?>>Open</option>
-                                    <option value="in_progress" <?= $edit_bug['status'] == 'in_progress' ? 'selected' : '' ?>>In Progress</option>
-                                    <option value="resolved" <?= $edit_bug['status'] == 'resolved' ? 'selected' : '' ?>>Resolved</option>
-                                    <option value="closed" <?= $edit_bug['status'] == 'closed' ? 'selected' : '' ?>>Closed</option>
-                                </select>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Task <span class="text-danger">*</span></label>
+                                    <select class="form-select" name="task_id" id="editTaskSelect" required>
+                                        <option value="">Select Task</option>
+                                        <?php foreach ($form_tasks as $task): ?>
+                                            <option value="<?= $task['id'] ?>" <?= $edit_bug['task_id'] == $task['id'] ? 'selected' : '' ?>>
+                                                <?= htmlspecialchars($task['name']) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Priority <span class="text-danger">*</span></label>
+                                    <select class="form-select" name="priority" required>
+                                        <option value="low" <?= $edit_bug['priority'] == 'low' ? 'selected' : '' ?>>Low</option>
+                                        <option value="medium" <?= $edit_bug['priority'] == 'medium' ? 'selected' : '' ?>>Medium</option>
+                                        <option value="high" <?= $edit_bug['priority'] == 'high' ? 'selected' : '' ?>>High</option>
+                                        <option value="critical" <?= $edit_bug['priority'] == 'critical' ? 'selected' : '' ?>>Critical</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Description <span class="text-danger">*</span></label>
+                                <textarea class="form-control wysiwyg" name="description" required><?= htmlspecialchars($edit_bug['description']) ?></textarea>
+                            </div>
+
+                            <!-- Existing Attachments -->
+                            <?php if (!empty($bug_attachments)): ?>
+                                <div class="mb-3">
+                                    <label class="form-label">Existing Attachments</label>
+                                    <div class="attachments-container">
+                                        <?php foreach ($bug_attachments as $attachment): ?>
+                                            <div class="attachment-item d-flex justify-content-between align-items-center">
+                                                <div>
+                                                    <i class="fas fa-paperclip me-2"></i>
+                                                    <a href="<?= $attachment['file_path'] ?>" target="_blank" class="text-decoration-none">
+                                                        <?= htmlspecialchars($attachment['original_name']) ?>
+                                                    </a>
+                                                    <small class="text-muted ms-2">(<?= round($attachment['file_size'] / 1024, 2) ?> KB)</small>
+                                                </div>
+                                                <form method="POST" class="d-inline">
+                                                    <input type="hidden" name="attachment_id" value="<?= $attachment['id'] ?>">
+                                                    <input type="hidden" name="bug_id" value="<?= $edit_bug['id'] ?>">
+                                                    <button type="submit" name="delete_attachment" class="btn btn-sm btn-danger delete-attachment">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                </form>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+
+                            <div class="mb-3">
+                                <label class="form-label">Add New Attachments</label>
+                                <input type="file" class="form-control" name="new_attachments[]" multiple
+                                    accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip">
+                                <small class="text-muted">You can select multiple files. Maximum 10MB per file.</small>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Status <span class="text-danger">*</span></label>
+                                    <select class="form-select" name="status" required>
+                                        <option value="open" <?= $edit_bug['status'] == 'open' ? 'selected' : '' ?>>Open</option>
+                                        <option value="in_progress" <?= $edit_bug['status'] == 'in_progress' ? 'selected' : '' ?>>In Progress</option>
+                                        <option value="resolved" <?= $edit_bug['status'] == 'resolved' ? 'selected' : '' ?>>Resolved</option>
+                                        <option value="closed" <?= $edit_bug['status'] == 'closed' ? 'selected' : '' ?>>Closed</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Start Date & Time</label>
+                                    <input type="datetime-local" class="form-control" name="start_datetime"
+                                        value="<?= $edit_bug['start_datetime'] ? date('Y-m-d\TH:i', strtotime($edit_bug['start_datetime'])) : '' ?>">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">End Date & Time</label>
+                                    <input type="datetime-local" class="form-control" name="end_datetime"
+                                        value="<?= $edit_bug['end_datetime'] ? date('Y-m-d\TH:i', strtotime($edit_bug['end_datetime'])) : '' ?>">
+                                </div>
                             </div>
                         </div>
-                        
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label">Start Date & Time</label>
-                                <input type="datetime-local" class="form-control" name="start_datetime" 
-                                       value="<?= htmlspecialchars($edit_bug['start_datetime']) ?>">
-                            </div>
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label">End Date & Time</label>
-                                <input type="datetime-local" class="form-control" name="end_datetime" 
-                                       value="<?= htmlspecialchars($edit_bug['end_datetime']) ?>">
-                            </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                            <button type="submit" name="update_bug" class="btn btn-primary">Update Bug</button>
                         </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                        <button type="submit" name="update_bug" class="btn btn-primary">Update Bug</button>
-                    </div>
-                </form>
+                    </form>
                 <?php endif; ?>
             </div>
         </div>
@@ -1134,6 +1166,7 @@ if (isset($_GET['edit_bug'])) {
             </div>
         </div>
     </div>
+    
     <!-- jQuery (required for DataTables) -->
     <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
     <!-- Bootstrap Bundle with Popper -->
@@ -1143,17 +1176,25 @@ if (isset($_GET['edit_bug'])) {
     <script src="https://cdn.datatables.net/1.13.4/js/dataTables.bootstrap5.min.js"></script>
     <script src="https://cdn.datatables.net/responsive/2.4.1/js/dataTables.responsive.min.js"></script>
     <script src="https://cdn.datatables.net/responsive/2.4.1/js/responsive.bootstrap5.min.js"></script>
-   <script>
+    <script>
         $(document).ready(function() {
+            console.log('Initializing DataTables...');
+            
             $('#bugsTable').DataTable({
                 responsive: true,
                 pageLength: 10,
-                lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "All"]],
-                order: [[5, 'desc']], // Sort by Created At descending by default
+                lengthMenu: [
+                    [10, 25, 50, 100, -1],
+                    [10, 25, 50, 100, "All"]
+                ],
+                order: [[0, 'desc']], // Sort by ID descending by default
                 language: {
                     search: "Search bugs:",
                     lengthMenu: "Show _MENU_ bugs",
                     info: "Showing _START_ to _END_ of _TOTAL_ bugs",
+                    infoEmpty: "No bugs to show",
+                    emptyTable: "No bugs found",
+                    zeroRecords: "No matching bugs found",
                     paginate: {
                         first: "First",
                         last: "Last",
@@ -1163,71 +1204,96 @@ if (isset($_GET['edit_bug'])) {
                 },
                 columnDefs: [
                     {
-                        targets: [0, 1, 2, 3, 4, 5, 6],
+                        targets: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
                         orderable: true
                     },
                     {
-                        targets: [6], // Actions column
+                        targets: [10], // Actions column
                         orderable: false,
                         searchable: false
                     }
-                ]
+                ],
+                initComplete: function() {
+                    console.log('DataTables initialized successfully');
+                }
             });
         });
 
         document.addEventListener('DOMContentLoaded', function() {
             const updateButtons = document.querySelectorAll('.update-bug-status');
             const updateModal = new bootstrap.Modal(document.getElementById('updateBugStatusModal'));
-            
+
             updateButtons.forEach(button => {
                 button.addEventListener('click', function() {
                     const bugId = this.dataset.bugId;
                     const currentStatus = this.dataset.currentStatus;
-                    
+
                     document.getElementById('update_bug_id').value = bugId;
                     document.getElementById('update_bug_status').value = currentStatus;
-                    
+
                     updateModal.show();
                 });
             });
-            
+
             // If project is already selected when modal opens, populate tasks
             const selectedProjectId = document.getElementById('projectSelect').value;
             if (selectedProjectId) {
                 updateTaskDropdown();
             }
-            
+
             // Auto-open edit modal if edit_bug parameter exists
             const urlParams = new URLSearchParams(window.location.search);
             if (urlParams.has('edit_bug')) {
                 const editModal = new bootstrap.Modal(document.getElementById('editBugModal'));
                 editModal.show();
-                
+
                 // Remove edit_bug parameter from URL without reloading
                 const newUrl = window.location.pathname + window.location.search.replace(/&?edit_bug=[^&]*/g, '');
                 window.history.replaceState({}, document.title, newUrl);
             }
         });
-        
+
         function updateTaskDropdown() {
             const projectId = document.getElementById('projectSelect').value;
             const taskSelect = document.getElementById('taskSelect');
-            
+
             if (projectId) {
+                // Clear current options
+                taskSelect.innerHTML = '<option value="">Select Task</option>';
+                
                 // Fetch tasks for the selected project via AJAX
                 fetch(`get_tasks.php?project_id=${projectId}`)
-                    .then(response => response.json())
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Network response was not ok');
+                        }
+                        return response.json();
+                    })
                     .then(data => {
-                        taskSelect.innerHTML = '<option value="">Select Task</option>';
-                        data.forEach(task => {
+                        if (data && data.length > 0) {
+                            data.forEach(task => {
+                                const option = document.createElement('option');
+                                option.value = task.id;
+                                option.textContent = task.name;
+                                taskSelect.appendChild(option);
+                            });
+                        } else {
                             const option = document.createElement('option');
-                            option.value = task.id;
-                            option.textContent = task.name;
+                            option.value = '';
+                            option.textContent = 'No tasks available for this project';
                             taskSelect.appendChild(option);
-                        });
+                        }
                     })
                     .catch(error => {
                         console.error('Error fetching tasks:', error);
+                        // Fallback to all tasks
+                        taskSelect.innerHTML = '<option value="">Select Task</option>';
+                        <?php foreach ($form_tasks as $task): ?>
+                            const option = document.createElement('option');
+                            option.value = '<?= $task['id'] ?>';
+                            option.textContent = '<?= addslashes($task['name']) ?>';
+                            taskSelect.appendChild(option);
+                        <?php endforeach; ?>
                     });
             } else {
                 // Reset to all tasks
@@ -1240,23 +1306,44 @@ if (isset($_GET['edit_bug'])) {
                 <?php endforeach; ?>
             }
         }
-        
+
         function updateEditTaskDropdown() {
             const projectId = document.getElementById('editProjectSelect').value;
             const taskSelect = document.getElementById('editTaskSelect');
-            
+            const currentTaskId = <?= $edit_bug ? $edit_bug['task_id'] : 'null' ?>;
+
             if (projectId) {
+                // Clear current options
+                taskSelect.innerHTML = '<option value="">Select Task</option>';
+                
                 // Fetch tasks for the selected project via AJAX
                 fetch(`get_tasks.php?project_id=${projectId}`)
-                    .then(response => response.json())
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Network response was not ok');
+                        }
+                        return response.json();
+                    })
                     .then(data => {
-                        taskSelect.innerHTML = '<option value="">Select Task</option>';
-                        data.forEach(task => {
+                        if (data && data.length > 0) {
+                            data.forEach(task => {
+                                const option = document.createElement('option');
+                                option.value = task.id;
+                                option.textContent = task.name;
+                                
+                                // Preselect the current task
+                                if (currentTaskId && task.id == currentTaskId) {
+                                    option.selected = true;
+                                }
+                                
+                                taskSelect.appendChild(option);
+                            });
+                        } else {
                             const option = document.createElement('option');
-                            option.value = task.id;
-                            option.textContent = task.name;
+                            option.value = '';
+                            option.textContent = 'No tasks available for this project';
                             taskSelect.appendChild(option);
-                        });
+                        }
                     })
                     .catch(error => {
                         console.error('Error fetching tasks:', error);
@@ -1268,11 +1355,17 @@ if (isset($_GET['edit_bug'])) {
                     const option = document.createElement('option');
                     option.value = '<?= $task['id'] ?>';
                     option.textContent = '<?= addslashes($task['name']) ?>';
+                    
+                    // Preselect the current task
+                    if (currentTaskId && <?= $task['id'] ?> == currentTaskId) {
+                        option.selected = true;
+                    }
+                    
                     taskSelect.appendChild(option);
                 <?php endforeach; ?>
             }
         }
-        
+
         function validateFiles(input) {
             const maxSize = 10 * 1024 * 1024; // 10MB
             const allowedTypes = [
@@ -1283,20 +1376,20 @@ if (isset($_GET['edit_bug'])) {
                 'text/plain',
                 'application/zip'
             ];
-            
+
             const fileError = document.getElementById('fileError');
             let isValid = true;
-            
+
             for (let i = 0; i < input.files.length; i++) {
                 const file = input.files[i];
-                
+
                 if (file.size > maxSize) {
                     fileError.textContent = `File "${file.name}" exceeds maximum size of 10MB.`;
                     input.classList.add('is-invalid');
                     isValid = false;
                     break;
                 }
-                
+
                 if (!allowedTypes.includes(file.type)) {
                     fileError.textContent = `File "${file.name}" has an invalid file type.`;
                     input.classList.add('is-invalid');
@@ -1304,47 +1397,15 @@ if (isset($_GET['edit_bug'])) {
                     break;
                 }
             }
-            
+
             if (isValid) {
                 input.classList.remove('is-invalid');
                 fileError.textContent = '';
             }
-            
+
             return isValid;
         }
-        
-        function validateBugForm() {
-            const form = document.getElementById('createBugForm');
-            const startDate = document.getElementById('start_datetime').value;
-            const endDate = document.getElementById('end_datetime').value;
-            const dateError = document.getElementById('dateError');
-            
-            // Validate dates
-            if (startDate && endDate) {
-                const start = new Date(startDate);
-                const end = new Date(endDate);
-                
-                if (end < start) {
-                    dateError.textContent = "End date cannot be earlier than start date.";
-                    document.getElementById('end_datetime').classList.add('is-invalid');
-                    return false;
-                } else {
-                    document.getElementById('end_datetime').classList.remove('is-invalid');
-                    dateError.textContent = '';
-                }
-            }
-            
-            // Validate files
-            const fileInput = document.getElementById('bug_attachments');
-            if (fileInput.files.length > 0) {
-                if (!validateFiles(fileInput)) {
-                    return false;
-                }
-            }
-            
-            return true;
-        }
-        
+
         // Auto-open modal if there was a form error
         <?php if (isset($error) && isset($_POST['create_bug'])): ?>
             document.addEventListener('DOMContentLoaded', function() {
@@ -1352,6 +1413,14 @@ if (isset($_GET['edit_bug'])) {
                 createBugModal.show();
             });
         <?php endif; ?>
+        
+        <?php if (isset($error) && isset($_POST['update_bug'])): ?>
+            document.addEventListener('DOMContentLoaded', function() {
+                var editBugModal = new bootstrap.Modal(document.getElementById('editBugModal'));
+                editBugModal.show();
+            });
+        <?php endif; ?>
     </script>
 </body>
+
 </html>

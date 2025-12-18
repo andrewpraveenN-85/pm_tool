@@ -104,6 +104,17 @@ if ($project['duration_days']) {
         $duration_text = $project['duration_days'] . ($project['duration_days'] == 1 ? ' day' : ' days');
     }
 }
+
+// Define status to color mapping (same as tasks.php)
+$statusColors = [
+    'closed' => 'success',
+    'in_progress' => 'primary',
+    'todo' => 'warning',
+    'reopened' => 'info',
+    'await_release' => 'info',
+    'in_review' => 'info',
+    'default' => 'secondary'
+];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -201,6 +212,19 @@ if ($project['duration_days']) {
             background: #007bff;
             color: white !important;
             border-color: #007bff;
+        }
+        
+        /* Priority badge styles */
+        .priority-critical { background-color: #dc3545 !important; }
+        .priority-high { background-color: #fd7e14 !important; }
+        .priority-medium { background-color: #17a2b8 !important; }
+        .priority-low { background-color: #28a745 !important; }
+        
+        /* Badge enhancements */
+        .badge-pill {
+            border-radius: 10rem;
+            padding: 0.4em 0.8em;
+            font-size: 0.85em;
         }
     </style>
 </head>
@@ -437,21 +461,12 @@ if ($project['duration_days']) {
                                                 <?php endif; ?>
                                             </td>
                                             <td>
-                                                <span class="badge bg-<?= 
-                                                    $task['priority'] == 'critical' ? 'danger' : 
-                                                    ($task['priority'] == 'high' ? 'warning' : 
-                                                    ($task['priority'] == 'medium' ? 'info' : 'success')) 
-                                                ?>">
+                                                <span class="badge badge-pill priority-<?= $task['priority'] ?>">
                                                     <?= ucfirst($task['priority']) ?>
                                                 </span>
                                             </td>
                                             <td>
-                                                <span class="badge bg-<?= 
-                                                    $task['status'] == 'open' ? 'secondary' : 
-                                                    ($task['status'] == 'in_progress' ? 'warning' : 
-                                                    ($task['status'] == 'completed' ? 'success' : 
-                                                    ($task['status'] == 'closed' ? 'info' : 'light'))) 
-                                                ?>">
+                                                <span class="badge badge-pill bg-<?= $statusColors[$task['status']] ?? $statusColors['default'] ?>">
                                                     <?= ucfirst(str_replace('_', ' ', $task['status'])) ?>
                                                 </span>
                                             </td>
@@ -492,22 +507,39 @@ if ($project['duration_days']) {
                                             </td>
                                             <td>
                                                 <?php if ($task['end_datetime']): ?>
-                                                    <?php if (strtotime($task['end_datetime']) < time() && $task['status'] != 'completed' && $task['status'] != 'closed'): ?>
-                                                        <span class="text-danger">
-                                                            <?= date('M j, Y', strtotime($task['end_datetime'])) ?>
-                                                            <br><small>Overdue</small>
-                                                        </span>
-                                                    <?php else: ?>
-                                                        <?= date('M j, Y', strtotime($task['end_datetime'])) ?>
-                                                        <br><small class="text-muted"><?= date('g:i A', strtotime($task['end_datetime'])) ?></small>
-                                                    <?php endif; ?>
+                                                    <?php 
+                                                    $end_date = strtotime($task['end_datetime']);
+                                                    $now = time();
+                                                    $status = $task['status'];
+                                                    
+                                                    $class = 'text-muted';
+                                                    $message = '';
+                                                    
+                                                    if ($status == 'closed') {
+                                                        // Check if closed after due date
+                                                    } else {
+                                                        if ($now > $end_date) {
+                                                            $class = 'text-danger';
+                                                            $days_overdue = floor(($now - $end_date) / (60 * 60 * 24));
+                                                            $message = "<br><small class='text-danger'>(Overdue by " . $days_overdue . " days)</small>";
+                                                        } elseif (($end_date - $now) <= (2 * 24 * 60 * 60)) {
+                                                            $class = 'text-warning';
+                                                            $days_remaining = floor(($end_date - $now) / (60 * 60 * 24));
+                                                            $message = "<br><small class='text-warning'>(Due in " . $days_remaining . " days)</small>";
+                                                        }
+                                                    }
+                                                    ?>
+                                                    <span class="<?= $class ?>">
+                                                        <?= date('M j, Y', $end_date) ?>
+                                                        <?= $message ?>
+                                                    </span>
                                                 <?php else: ?>
                                                     <span class="text-muted">-</span>
                                                 <?php endif; ?>
                                             </td>
                                             <td>
                                                 <?php if ($task['bug_count'] > 0): ?>
-                                                    <a href="bugs.php?task_filter=<?= $task['id'] ?>" class="badge bg-danger text-decoration-none">
+                                                    <a href="bugs.php?task_filter=<?= $task['id'] ?>" class="badge bg-danger badge-pill text-decoration-none">
                                                         <i class="fas fa-bug"></i> <?= $task['bug_count'] ?>
                                                     </a>
                                                 <?php else: ?>
@@ -553,7 +585,7 @@ if ($project['duration_days']) {
                 responsive: true,
                 pageLength: 10,
                 lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "All"]],
-                order: [[5, 'desc']], // Sort by Created At descending by default
+                order: [[5, 'desc']], // Sort by End Date descending
                 language: {
                     search: "Search tasks:",
                     lengthMenu: "Show _MENU_ tasks",
@@ -571,7 +603,7 @@ if ($project['duration_days']) {
                         orderable: true
                     },
                     {
-                        targets: [6], // Actions column
+                        targets: [7], // Actions column
                         orderable: false,
                         searchable: false
                     }
@@ -621,28 +653,59 @@ if ($project['duration_days']) {
                 }
             });
             
-            // Status Badge Colors
-            const statusBadges = document.querySelectorAll('.status-badge');
-            statusBadges.forEach(badge => {
-                const status = badge.textContent.trim().toLowerCase();
-                let bgClass = 'bg-secondary';
+            // Apply priority badge colors
+            const priorityBadges = document.querySelectorAll('.priority-critical, .priority-high, .priority-medium, .priority-low');
+            priorityBadges.forEach(badge => {
+                const priority = badge.textContent.trim().toLowerCase();
+                badge.className = 'badge badge-pill';
                 
-                switch(status) {
-                    case 'open':
-                        bgClass = 'bg-secondary';
+                switch(priority) {
+                    case 'critical':
+                        badge.classList.add('priority-critical');
                         break;
-                    case 'in progress':
-                        bgClass = 'bg-warning';
+                    case 'high':
+                        badge.classList.add('priority-high');
                         break;
-                    case 'completed':
-                        bgClass = 'bg-success';
+                    case 'medium':
+                        badge.classList.add('priority-medium');
                         break;
-                    case 'closed':
-                        bgClass = 'bg-info';
+                    case 'low':
+                        badge.classList.add('priority-low');
                         break;
                 }
+            });
+            
+            // Apply status badge colors
+            const statusBadges = document.querySelectorAll('span.badge[class*="bg-"]');
+            statusBadges.forEach(badge => {
+                const status = badge.textContent.trim().toLowerCase().replace(' ', '_');
+                const badgeClass = badge.className;
                 
-                badge.classList.add(bgClass);
+                // Remove existing background classes
+                badge.className = badgeClass.replace(/bg-\w+/g, '');
+                
+                // Add consistent status classes
+                switch(status) {
+                    case 'closed':
+                        badge.classList.add('bg-success');
+                        break;
+                    case 'in_progress':
+                        badge.classList.add('bg-primary');
+                        break;
+                    case 'todo':
+                        badge.classList.add('bg-warning');
+                        break;
+                    case 'reopened':
+                    case 'await_release':
+                    case 'in_review':
+                        badge.classList.add('bg-info');
+                        break;
+                    default:
+                        badge.classList.add('bg-secondary');
+                }
+                
+                // Ensure badge-pill class
+                badge.classList.add('badge-pill');
             });
         });
     </script>
