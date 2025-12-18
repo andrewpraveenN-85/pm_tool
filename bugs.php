@@ -1209,69 +1209,7 @@ if (isset($_GET['edit_bug'])) {
             }
         });
         
-        function updateTaskDropdown() {
-            const projectId = document.getElementById('projectSelect').value;
-            const taskSelect = document.getElementById('taskSelect');
-            
-            if (projectId) {
-                // Fetch tasks for the selected project via AJAX
-                fetch(`get_tasks.php?project_id=${projectId}`)
-                    .then(response => response.json())
-                    .then(data => {
-                        taskSelect.innerHTML = '<option value="">Select Task</option>';
-                        data.forEach(task => {
-                            const option = document.createElement('option');
-                            option.value = task.id;
-                            option.textContent = task.name;
-                            taskSelect.appendChild(option);
-                        });
-                    })
-                    .catch(error => {
-                        console.error('Error fetching tasks:', error);
-                    });
-            } else {
-                // Reset to all tasks
-                taskSelect.innerHTML = '<option value="">Select Task</option>';
-                <?php foreach ($form_tasks as $task): ?>
-                    const option = document.createElement('option');
-                    option.value = '<?= $task['id'] ?>';
-                    option.textContent = '<?= addslashes($task['name']) ?>';
-                    taskSelect.appendChild(option);
-                <?php endforeach; ?>
-            }
-        }
-        
-        function updateEditTaskDropdown() {
-            const projectId = document.getElementById('editProjectSelect').value;
-            const taskSelect = document.getElementById('editTaskSelect');
-            
-            if (projectId) {
-                // Fetch tasks for the selected project via AJAX
-                fetch(`get_tasks.php?project_id=${projectId}`)
-                    .then(response => response.json())
-                    .then(data => {
-                        taskSelect.innerHTML = '<option value="">Select Task</option>';
-                        data.forEach(task => {
-                            const option = document.createElement('option');
-                            option.value = task.id;
-                            option.textContent = task.name;
-                            taskSelect.appendChild(option);
-                        });
-                    })
-                    .catch(error => {
-                        console.error('Error fetching tasks:', error);
-                    });
-            } else {
-                // Reset to all tasks
-                taskSelect.innerHTML = '<option value="">Select Task</option>';
-                <?php foreach ($form_tasks as $task): ?>
-                    const option = document.createElement('option');
-                    option.value = '<?= $task['id'] ?>';
-                    option.textContent = '<?= addslashes($task['name']) ?>';
-                    taskSelect.appendChild(option);
-                <?php endforeach; ?>
-            }
-        }
+
         
         function validateFiles(input) {
             const maxSize = 10 * 1024 * 1024; // 10MB
@@ -1352,6 +1290,70 @@ if (isset($_GET['edit_bug'])) {
                 createBugModal.show();
             });
         <?php endif; ?>
+
+                function updateTaskDropdown() {
+            const projectId = document.getElementById('projectSelect').value;
+            const taskSelect = document.getElementById('taskSelect');
+            
+            if (projectId) {
+                // Fetch tasks for the selected project via AJAX
+                fetch(`get_tasks.php?project_id=${projectId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        taskSelect.innerHTML = '<option value="">Select Task</option>';
+                        data.forEach(task => {
+                            const option = document.createElement('option');
+                            option.value = task.id;
+                            option.textContent = task.name;
+                            taskSelect.appendChild(option);
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Error fetching tasks:', error);
+                    });
+            } else {
+                // Reset to all tasks
+                taskSelect.innerHTML = '<option value="">Select Task</option>';
+                <?php foreach ($form_tasks as $task): ?>
+                    const option = document.createElement('option');
+                    option.value = '<?= $task['id'] ?>';
+                    option.textContent = '<?= addslashes($task['name']) ?>';
+                    taskSelect.appendChild(option);
+                <?php endforeach; ?>
+            }
+        }
+        
+        function updateEditTaskDropdown() {
+            const projectId = document.getElementById('editProjectSelect').value;
+            const taskSelect = document.getElementById('editTaskSelect');
+            
+            if (projectId) {
+                // Fetch tasks for the selected project via AJAX
+                fetch(`get_tasks.php?project_id=${projectId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        taskSelect.innerHTML = '<option value="">Select Task</option>';
+                        data.forEach(task => {
+                            const option = document.createElement('option');
+                            option.value = task.id;
+                            option.textContent = task.name;
+                            taskSelect.appendChild(option);
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Error fetching tasks:', error);
+                    });
+            } else {
+                // Reset to all tasks
+                taskSelect.innerHTML = '<option value="">Select Task</option>';
+                <?php foreach ($form_tasks as $task): ?>
+                    const option = document.createElement('option');
+                    option.value = '<?= $task['id'] ?>';
+                    option.textContent = '<?= addslashes($task['name']) ?>';
+                    taskSelect.appendChild(option);
+                <?php endforeach; ?>
+            }
+        }
     </script>
 </body>
 </html>
