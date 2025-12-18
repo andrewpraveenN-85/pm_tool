@@ -427,38 +427,35 @@ if ($_POST) {
             $stmt = $db->prepare($query);
             $stmt->bindParam(':status', $status);
             $stmt->bindParam(':id', $bug_id);
+            $stmt->execute();
 
-            if ($stmt->execute()) {
-                $db->commit();
+            $db->commit();
 
-                // Log the status change activity
-                $activity_details = [
-                    'bug_id' => $bug_id,
-                    'bug_name' => $current_bug['name'],
-                    'status_change' => [
-                        'from' => $current_bug['status'],
-                        'to' => $status
-                    ]
-                ];
+            // Log the status change activity
+            $activity_details = [
+                'bug_id' => $bug_id,
+                'bug_name' => $current_bug['name'],
+                'status_change' => [
+                    'from' => $current_bug['status'],
+                    'to' => $status
+                ]
+            ];
 
-                $activityLogger->logActivity(
-                    $_SESSION['user_id'],
-                    'bug_status_updated',
-                    'Bug status updated',
-                    json_encode($activity_details),
-                    $bug_id
-                );
+            $activityLogger->logActivity(
+                $_SESSION['user_id'],
+                'bug_status_updated',
+                'Bug status updated',
+                json_encode($activity_details),
+                $bug_id
+            );
 
-                // Send bug status update notification
-                if ($bug) {
-                    $assignee_ids = !empty($bug['assignee_ids']) ? explode(',', $bug['assignee_ids']) : [];
-                    $notification->createBugStatusUpdateNotification($bug_id, $status, $assignee_ids, $bug['task_manager_id']);
-                }
-
-                $success = "Bug status updated successfully!";
-            } else {
-                throw new Exception("Failed to update bug status");
+            // Send bug status update notification
+            if ($bug) {
+                $assignee_ids = !empty($bug['assignee_ids']) ? explode(',', $bug['assignee_ids']) : [];
+                $notification->createBugStatusUpdateNotification($bug_id, $status, $assignee_ids, $bug['task_manager_id']);
             }
+
+            $success = "Bug status updated successfully!";
         } catch (Exception $e) {
             $db->rollBack();
             $error = "Failed to update bug status: " . $e->getMessage();
@@ -583,35 +580,6 @@ $all_tasks = $db->query("
     ORDER BY p.name, t.name
 ")->fetchAll(PDO::FETCH_ASSOC);
 
-// Get tasks filtered by selected project for the form
-$selected_project_id = $_POST['project_id'] ?? $_GET['form_project'] ?? '';
-$form_tasks = [];
-if (!empty($selected_project_id)) {
-    $task_stmt = $db->prepare("
-        SELECT t.id, t.name 
-        FROM tasks t 
-        WHERE t.project_id = ? 
-        AND t.status != 'closed' 
-        AND t.status != 'completed'
-        ORDER BY t.name
-    ");
-    $task_stmt->execute([$selected_project_id]);
-    $form_tasks = $task_stmt->fetchAll(PDO::FETCH_ASSOC);
-} else {
-    // If no project selected, show all active tasks
-    $task_stmt = $db->prepare("
-        SELECT t.id, t.name 
-        FROM tasks t 
-        LEFT JOIN projects p ON t.project_id = p.id
-        WHERE t.status != 'closed' 
-        AND t.status != 'completed'
-        AND p.status = 'active'
-        ORDER BY t.name
-    ");
-    $task_stmt->execute();
-    $form_tasks = $task_stmt->fetchAll(PDO::FETCH_ASSOC);
-}
-
 // Get bug details for edit if bug_id is provided
 $edit_bug = null;
 $bug_attachments = [];
@@ -721,6 +689,28 @@ if (isset($_GET['edit_bug'])) {
         .priority-high { background-color: #fd7e14 !important; }
         .priority-medium { background-color: #0dcaf0 !important; }
         .priority-low { background-color: #6c757d !important; }
+        
+        /* Required field indicator */
+        .required:after {
+            content: " *";
+            color: #dc3545;
+        }
+        
+        /* Loading spinner for AJAX */
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
@@ -917,12 +907,12 @@ if (isset($_GET['edit_bug'])) {
                     <div class="modal-body">
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Bug Name <span class="text-danger">*</span></label>
+                                <label class="form-label required">Bug Name</label>
                                 <input type="text" class="form-control" name="name" id="bug_name" required maxlength="255" value="<?= isset($_POST['name']) ? htmlspecialchars($_POST['name']) : '' ?>">
                                 <div class="invalid-feedback">Please enter a bug name.</div>
                             </div>
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Project <span class="text-danger">*</span></label>
+                                <label class="form-label required">Project</label>
                                 <select class="form-select" name="project_id" id="projectSelect" required onchange="updateTaskDropdown()">
                                     <option value="">Select Project</option>
                                     <?php foreach ($projects as $project): ?>
@@ -937,19 +927,35 @@ if (isset($_GET['edit_bug'])) {
 
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Task <span class="text-danger">*</span></label>
-                                <select class="form-select" name="task_id" id="taskSelect" required>
-                                    <option value="">Select Task</option>
-                                    <?php foreach ($form_tasks as $task): ?>
-                                        <option value="<?= $task['id'] ?>" <?= (isset($_POST['task_id']) && $_POST['task_id'] == $task['id']) ? 'selected' : '' ?>>
-                                            <?= htmlspecialchars($task['name']) ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
+                                <label class="form-label required">Task</label>
+                                <div class="position-relative">
+                                    <select class="form-select" name="task_id" id="taskSelect" required>
+                                        <option value="">Select Task</option>
+                                        <?php 
+                                        // Initial tasks - all active tasks
+                                        $initial_tasks = $db->query("
+                                            SELECT t.id, t.name 
+                                            FROM tasks t 
+                                            LEFT JOIN projects p ON t.project_id = p.id 
+                                            WHERE t.status != 'closed' 
+                                            AND t.status != 'completed'
+                                            AND p.status = 'active'
+                                            ORDER BY t.name
+                                        ")->fetchAll(PDO::FETCH_ASSOC);
+                                        foreach ($initial_tasks as $task): ?>
+                                            <option value="<?= $task['id'] ?>" <?= (isset($_POST['task_id']) && $_POST['task_id'] == $task['id']) ? 'selected' : '' ?>>
+                                                <?= htmlspecialchars($task['name']) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <div id="taskLoading" class="position-absolute" style="right: 10px; top: 50%; transform: translateY(-50%); display: none;">
+                                        <div class="loading-spinner"></div>
+                                    </div>
+                                </div>
                                 <div class="invalid-feedback">Please select a task.</div>
                             </div>
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Priority <span class="text-danger">*</span></label>
+                                <label class="form-label required">Priority</label>
                                 <select class="form-select" name="priority" id="bug_priority" required>
                                     <option value="low" <?= (isset($_POST['priority']) && $_POST['priority'] == 'low') ? 'selected' : '' ?>>Low</option>
                                     <option value="medium" <?= (!isset($_POST['priority']) || $_POST['priority'] == 'medium') ? 'selected' : '' ?>>Medium</option>
@@ -961,7 +967,7 @@ if (isset($_GET['edit_bug'])) {
                         </div>
 
                         <div class="mb-3">
-                            <label class="form-label">Description <span class="text-danger">*</span></label>
+                            <label class="form-label required">Description</label>
                             <textarea class="form-control wysiwyg" name="description" id="bug_description" required><?= isset($_POST['description']) ? htmlspecialchars($_POST['description']) : '' ?></textarea>
                             <div class="invalid-feedback">Please enter a description.</div>
                         </div>
@@ -977,7 +983,7 @@ if (isset($_GET['edit_bug'])) {
 
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Status <span class="text-danger">*</span></label>
+                                <label class="form-label required">Status</label>
                                 <select class="form-select" name="status" id="bug_status" required>
                                     <option value="open" <?= (!isset($_POST['status']) || $_POST['status'] == 'open') ? 'selected' : '' ?>>Open</option>
                                     <option value="in_progress" <?= (isset($_POST['status']) && $_POST['status'] == 'in_progress') ? 'selected' : '' ?>>In Progress</option>
@@ -1023,12 +1029,12 @@ if (isset($_GET['edit_bug'])) {
                         <div class="modal-body">
                             <div class="row">
                                 <div class="col-md-6 mb-3">
-                                    <label class="form-label">Bug Name <span class="text-danger">*</span></label>
+                                    <label class="form-label required">Bug Name</label>
                                     <input type="text" class="form-control" name="name" required maxlength="255"
                                         value="<?= htmlspecialchars($edit_bug['name']) ?>">
                                 </div>
                                 <div class="col-md-6 mb-3">
-                                    <label class="form-label">Project <span class="text-danger">*</span></label>
+                                    <label class="form-label required">Project</label>
                                     <select class="form-select" name="project_id" id="editProjectSelect" required onchange="updateEditTaskDropdown()">
                                         <option value="">Select Project</option>
                                         <?php foreach ($projects as $project): ?>
@@ -1042,18 +1048,35 @@ if (isset($_GET['edit_bug'])) {
 
                             <div class="row">
                                 <div class="col-md-6 mb-3">
-                                    <label class="form-label">Task <span class="text-danger">*</span></label>
-                                    <select class="form-select" name="task_id" id="editTaskSelect" required>
-                                        <option value="">Select Task</option>
-                                        <?php foreach ($form_tasks as $task): ?>
-                                            <option value="<?= $task['id'] ?>" <?= $edit_bug['task_id'] == $task['id'] ? 'selected' : '' ?>>
-                                                <?= htmlspecialchars($task['name']) ?>
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
+                                    <label class="form-label required">Task</label>
+                                    <div class="position-relative">
+                                        <select class="form-select" name="task_id" id="editTaskSelect" required>
+                                            <option value="">Select Task</option>
+                                            <?php 
+                                            // Load tasks for the current project
+                                            $edit_tasks = $db->prepare("
+                                                SELECT t.id, t.name 
+                                                FROM tasks t 
+                                                WHERE t.project_id = ? 
+                                                AND t.status != 'closed' 
+                                                AND t.status != 'completed'
+                                                ORDER BY t.name
+                                            ");
+                                            $edit_tasks->execute([$edit_bug['project_id']]);
+                                            $edit_task_list = $edit_tasks->fetchAll(PDO::FETCH_ASSOC);
+                                            foreach ($edit_task_list as $task): ?>
+                                                <option value="<?= $task['id'] ?>" <?= $edit_bug['task_id'] == $task['id'] ? 'selected' : '' ?>>
+                                                    <?= htmlspecialchars($task['name']) ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <div id="editTaskLoading" class="position-absolute" style="right: 10px; top: 50%; transform: translateY(-50%); display: none;">
+                                            <div class="loading-spinner"></div>
+                                        </div>
+                                    </div>
                                 </div>
                                 <div class="col-md-6 mb-3">
-                                    <label class="form-label">Priority <span class="text-danger">*</span></label>
+                                    <label class="form-label required">Priority</label>
                                     <select class="form-select" name="priority" required>
                                         <option value="low" <?= $edit_bug['priority'] == 'low' ? 'selected' : '' ?>>Low</option>
                                         <option value="medium" <?= $edit_bug['priority'] == 'medium' ? 'selected' : '' ?>>Medium</option>
@@ -1064,7 +1087,7 @@ if (isset($_GET['edit_bug'])) {
                             </div>
 
                             <div class="mb-3">
-                                <label class="form-label">Description <span class="text-danger">*</span></label>
+                                <label class="form-label required">Description</label>
                                 <textarea class="form-control wysiwyg" name="description" required><?= htmlspecialchars($edit_bug['description']) ?></textarea>
                             </div>
 
@@ -1104,7 +1127,7 @@ if (isset($_GET['edit_bug'])) {
 
                             <div class="row">
                                 <div class="col-md-6 mb-3">
-                                    <label class="form-label">Status <span class="text-danger">*</span></label>
+                                    <label class="form-label required">Status</label>
                                     <select class="form-select" name="status" required>
                                         <option value="open" <?= $edit_bug['status'] == 'open' ? 'selected' : '' ?>>Open</option>
                                         <option value="in_progress" <?= $edit_bug['status'] == 'in_progress' ? 'selected' : '' ?>>In Progress</option>
@@ -1235,12 +1258,6 @@ if (isset($_GET['edit_bug'])) {
                 });
             });
 
-            // If project is already selected when modal opens, populate tasks
-            const selectedProjectId = document.getElementById('projectSelect').value;
-            if (selectedProjectId) {
-                updateTaskDropdown();
-            }
-
             // Auto-open edit modal if edit_bug parameter exists
             const urlParams = new URLSearchParams(window.location.search);
             if (urlParams.has('edit_bug')) {
@@ -1256,8 +1273,12 @@ if (isset($_GET['edit_bug'])) {
         function updateTaskDropdown() {
             const projectId = document.getElementById('projectSelect').value;
             const taskSelect = document.getElementById('taskSelect');
+            const taskLoading = document.getElementById('taskLoading');
 
             if (projectId) {
+                // Show loading spinner
+                taskLoading.style.display = 'block';
+                
                 // Clear current options
                 taskSelect.innerHTML = '<option value="">Select Task</option>';
                 
@@ -1287,18 +1308,19 @@ if (isset($_GET['edit_bug'])) {
                     .catch(error => {
                         console.error('Error fetching tasks:', error);
                         // Fallback to all tasks
-                        taskSelect.innerHTML = '<option value="">Select Task</option>';
-                        <?php foreach ($form_tasks as $task): ?>
-                            const option = document.createElement('option');
-                            option.value = '<?= $task['id'] ?>';
-                            option.textContent = '<?= addslashes($task['name']) ?>';
-                            taskSelect.appendChild(option);
-                        <?php endforeach; ?>
+                        const option = document.createElement('option');
+                        option.value = '';
+                        option.textContent = 'Error loading tasks. Please try again.';
+                        taskSelect.appendChild(option);
+                    })
+                    .finally(() => {
+                        // Hide loading spinner
+                        taskLoading.style.display = 'none';
                     });
             } else {
                 // Reset to all tasks
                 taskSelect.innerHTML = '<option value="">Select Task</option>';
-                <?php foreach ($form_tasks as $task): ?>
+                <?php foreach ($initial_tasks as $task): ?>
                     const option = document.createElement('option');
                     option.value = '<?= $task['id'] ?>';
                     option.textContent = '<?= addslashes($task['name']) ?>';
@@ -1310,9 +1332,13 @@ if (isset($_GET['edit_bug'])) {
         function updateEditTaskDropdown() {
             const projectId = document.getElementById('editProjectSelect').value;
             const taskSelect = document.getElementById('editTaskSelect');
+            const taskLoading = document.getElementById('editTaskLoading');
             const currentTaskId = <?= $edit_bug ? $edit_bug['task_id'] : 'null' ?>;
 
             if (projectId) {
+                // Show loading spinner
+                taskLoading.style.display = 'block';
+                
                 // Clear current options
                 taskSelect.innerHTML = '<option value="">Select Task</option>';
                 
@@ -1347,22 +1373,43 @@ if (isset($_GET['edit_bug'])) {
                     })
                     .catch(error => {
                         console.error('Error fetching tasks:', error);
+                        const option = document.createElement('option');
+                        option.value = '';
+                        option.textContent = 'Error loading tasks. Please try again.';
+                        taskSelect.appendChild(option);
+                    })
+                    .finally(() => {
+                        // Hide loading spinner
+                        taskLoading.style.display = 'none';
                     });
             } else {
                 // Reset to all tasks
                 taskSelect.innerHTML = '<option value="">Select Task</option>';
-                <?php foreach ($form_tasks as $task): ?>
-                    const option = document.createElement('option');
-                    option.value = '<?= $task['id'] ?>';
-                    option.textContent = '<?= addslashes($task['name']) ?>';
-                    
-                    // Preselect the current task
-                    if (currentTaskId && <?= $task['id'] ?> == currentTaskId) {
-                        option.selected = true;
-                    }
-                    
-                    taskSelect.appendChild(option);
-                <?php endforeach; ?>
+                <?php 
+                if ($edit_bug) {
+                    // Load all tasks for the edit modal
+                    $all_edit_tasks = $db->query("
+                        SELECT t.id, t.name 
+                        FROM tasks t 
+                        LEFT JOIN projects p ON t.project_id = p.id
+                        WHERE t.status != 'closed' 
+                        AND t.status != 'completed'
+                        AND p.status = 'active'
+                        ORDER BY t.name
+                    ")->fetchAll(PDO::FETCH_ASSOC);
+                    foreach ($all_edit_tasks as $task): ?>
+                        const option = document.createElement('option');
+                        option.value = '<?= $task['id'] ?>';
+                        option.textContent = '<?= addslashes($task['name']) ?>';
+                        
+                        // Preselect the current task
+                        if (currentTaskId && <?= $task['id'] ?> == currentTaskId) {
+                            option.selected = true;
+                        }
+                        
+                        taskSelect.appendChild(option);
+                    <?php endforeach;
+                } ?>
             }
         }
 
