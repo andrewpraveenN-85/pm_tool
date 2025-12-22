@@ -553,7 +553,7 @@ if (!empty($filter_end_date)) {
 }
 
 // Get tasks based on user role with filters
-if ($_SESSION['user_role'] == 'manager') {
+if ($_SESSION['user_role'] == 'manager' || $_SESSION['user_role'] == 'qa') {
     $tasks_query = "
         SELECT t.*, p.name as project_name, 
                GROUP_CONCAT(DISTINCT u.name) as assignee_names,
