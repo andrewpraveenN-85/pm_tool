@@ -860,7 +860,7 @@ $statusColors = [
                         <div class="row g-3">
                             <div class="col-md-3">
                                 <label class="form-label">Project</label>
-                                <select class="form-select" name="filter_project" id="filter_project">
+                                <select class="form-select" name="filter_project" id="filterProject">
                                     <option value="">All Projects</option>
                                     <?php foreach ($projects as $project): ?>
                                         <option value="<?= $project['id'] ?>" <?= $filter_project == $project['id'] ? 'selected' : '' ?>>
@@ -872,16 +872,9 @@ $statusColors = [
 
                             <div class="col-md-3">
                                 <label class="form-label">Task</label>
-                                <select class="form-select" name="filter_task" id="filter_task">
+                                <select class="form-select" name="filter_task" id="filterTask">
                                     <option value="">All Tasks</option>
-                                    <?php 
-                                    $filtered_tasks = $all_tasks;
-                                    if (!empty($filter_project)) {
-                                        $filtered_tasks = array_filter($all_tasks, function ($task) use ($filter_project) {
-                                            return $task['project_id'] == $filter_project;
-                                        });
-                                    }
-                                    foreach ($filtered_tasks as $task): ?>
+                                    <?php foreach ($all_tasks as $task): ?>
                                         <option value="<?= $task['id'] ?>" <?= $filter_task == $task['id'] ? 'selected' : '' ?>>
                                             <?= htmlspecialchars($task['name']) ?> (<?= htmlspecialchars($task['project_name']) ?>)
                                         </option>
@@ -891,13 +884,13 @@ $statusColors = [
 
                             <div class="col-md-3">
                                 <label class="form-label">Start Date From</label>
-                                <input type="date" class="form-control" name="filter_start_date" id="filter_start_date"
+                                <input type="date" class="form-control" name="filter_start_date" id="filterStartDate"
                                     value="<?= htmlspecialchars($filter_start_date) ?>">
                             </div>
 
                             <div class="col-md-3">
                                 <label class="form-label">End Date To</label>
-                                <input type="date" class="form-control" name="filter_end_date" id="filter_end_date"
+                                <input type="date" class="form-control" name="filter_end_date" id="filterEndDate"
                                     value="<?= htmlspecialchars($filter_end_date) ?>">
                             </div>
                         </div>
@@ -1051,7 +1044,7 @@ $statusColors = [
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label required">Bug Name</label>
-                                <input type="text" class="form-control" name="name" required
+                                <input type="text" class="form-control" name="name" id="bugName" required
                                     value="<?= isset($_POST['name']) ? htmlspecialchars($_POST['name']) : '' ?>"
                                     maxlength="255">
                             </div>
@@ -1089,7 +1082,7 @@ $statusColors = [
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label required">Priority</label>
-                                <select class="form-select" name="priority" required>
+                                <select class="form-select" name="priority" id="bugPriority" required>
                                     <option value="low" <?= (isset($_POST['priority']) && $_POST['priority'] == 'low') ? 'selected' : '' ?>>Low</option>
                                     <option value="medium" <?= (!isset($_POST['priority']) || $_POST['priority'] == 'medium') ? 'selected' : '' ?>>Medium</option>
                                     <option value="high" <?= (isset($_POST['priority']) && $_POST['priority'] == 'high') ? 'selected' : '' ?>>High</option>
@@ -1100,12 +1093,12 @@ $statusColors = [
 
                         <div class="mb-3">
                             <label class="form-label required">Description</label>
-                            <textarea class="form-control wysiwyg" name="description" required><?= isset($_POST['description']) ? htmlspecialchars($_POST['description']) : '' ?></textarea>
+                            <textarea class="form-control wysiwyg" name="description" id="bugDescription" required><?= isset($_POST['description']) ? htmlspecialchars($_POST['description']) : '' ?></textarea>
                         </div>
 
                         <div class="mb-3">
                             <label class="form-label">Attachments</label>
-                            <input type="file" class="form-control" name="attachments[]" multiple
+                            <input type="file" class="form-control" name="attachments[]" id="bugAttachments" multiple
                                 accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip">
                             <small class="text-muted">Max 10MB per file. Allowed types: JPG, PNG, GIF, PDF, DOC, DOCX, TXT, ZIP</small>
                         </div>
@@ -1113,7 +1106,7 @@ $statusColors = [
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label required">Status</label>
-                                <select class="form-select" name="status" required>
+                                <select class="form-select" name="status" id="bugStatus" required>
                                     <option value="open" <?= (!isset($_POST['status']) || $_POST['status'] == 'open') ? 'selected' : '' ?>>Open</option>
                                     <option value="in_progress" <?= (isset($_POST['status']) && $_POST['status'] == 'in_progress') ? 'selected' : '' ?>>In Progress</option>
                                     <option value="resolved" <?= (isset($_POST['status']) && $_POST['status'] == 'resolved') ? 'selected' : '' ?>>Resolved</option>
@@ -1125,12 +1118,12 @@ $statusColors = [
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Start Date & Time</label>
-                                <input type="datetime-local" class="form-control" name="start_datetime"
+                                <input type="datetime-local" class="form-control" name="start_datetime" id="startDatetime"
                                     value="<?= isset($_POST['start_datetime']) ? htmlspecialchars($_POST['start_datetime']) : '' ?>">
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">End Date & Time</label>
-                                <input type="datetime-local" class="form-control" name="end_datetime"
+                                <input type="datetime-local" class="form-control" name="end_datetime" id="endDatetime"
                                     value="<?= isset($_POST['end_datetime']) ? htmlspecialchars($_POST['end_datetime']) : '' ?>">
                             </div>
                         </div>
@@ -1153,13 +1146,13 @@ $statusColors = [
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <?php if ($edit_bug): ?>
-                    <form method="POST" enctype="multipart/form-data">
+                    <form method="POST" enctype="multipart/form-data" id="editBugForm">
                         <input type="hidden" name="bug_id" value="<?= $edit_bug['id'] ?>">
                         <div class="modal-body">
                             <div class="row">
                                 <div class="col-md-6 mb-3">
                                     <label class="form-label required">Bug Name</label>
-                                    <input type="text" class="form-control" name="name" required
+                                    <input type="text" class="form-control" name="name" id="editBugName" required
                                         value="<?= htmlspecialchars($edit_bug['name']) ?>"
                                         maxlength="255">
                                 </div>
@@ -1207,7 +1200,7 @@ $statusColors = [
                                 </div>
                                 <div class="col-md-6 mb-3">
                                     <label class="form-label required">Priority</label>
-                                    <select class="form-select" name="priority" required>
+                                    <select class="form-select" name="priority" id="editBugPriority" required>
                                         <option value="low" <?= $edit_bug['priority'] == 'low' ? 'selected' : '' ?>>Low</option>
                                         <option value="medium" <?= $edit_bug['priority'] == 'medium' ? 'selected' : '' ?>>Medium</option>
                                         <option value="high" <?= $edit_bug['priority'] == 'high' ? 'selected' : '' ?>>High</option>
@@ -1218,7 +1211,7 @@ $statusColors = [
 
                             <div class="mb-3">
                                 <label class="form-label required">Description</label>
-                                <textarea class="form-control wysiwyg" name="description" required><?= htmlspecialchars($edit_bug['description']) ?></textarea>
+                                <textarea class="form-control wysiwyg" name="description" id="editBugDescription" required><?= htmlspecialchars($edit_bug['description']) ?></textarea>
                             </div>
 
                             <?php if (!empty($bug_attachments)): ?>
@@ -1249,7 +1242,7 @@ $statusColors = [
 
                             <div class="mb-3">
                                 <label class="form-label">Add New Attachments</label>
-                                <input type="file" class="form-control" name="new_attachments[]" multiple
+                                <input type="file" class="form-control" name="new_attachments[]" id="editBugAttachments" multiple
                                     accept=".jpg,.jpeg,.png,.gif,.pdf,.doc,.docx,.txt,.zip">
                                 <small class="text-muted">Max 10MB per file. Allowed types: JPG, PNG, GIF, PDF, DOC, DOCX, TXT, ZIP</small>
                             </div>
@@ -1257,7 +1250,7 @@ $statusColors = [
                             <div class="row">
                                 <div class="col-md-6 mb-3">
                                     <label class="form-label required">Status</label>
-                                    <select class="form-select" name="status" required>
+                                    <select class="form-select" name="status" id="editBugStatus" required>
                                         <option value="open" <?= $edit_bug['status'] == 'open' ? 'selected' : '' ?>>Open</option>
                                         <option value="in_progress" <?= $edit_bug['status'] == 'in_progress' ? 'selected' : '' ?>>In Progress</option>
                                         <option value="resolved" <?= $edit_bug['status'] == 'resolved' ? 'selected' : '' ?>>Resolved</option>
@@ -1269,12 +1262,12 @@ $statusColors = [
                             <div class="row">
                                 <div class="col-md-6 mb-3">
                                     <label class="form-label">Start Date & Time</label>
-                                    <input type="datetime-local" class="form-control" name="start_datetime"
+                                    <input type="datetime-local" class="form-control" name="start_datetime" id="editStartDatetime"
                                         value="<?= $edit_bug['start_datetime'] ? date('Y-m-d\TH:i', strtotime($edit_bug['start_datetime'])) : '' ?>">
                                 </div>
                                 <div class="col-md-6 mb-3">
                                     <label class="form-label">End Date & Time</label>
-                                    <input type="datetime-local" class="form-control" name="end_datetime"
+                                    <input type="datetime-local" class="form-control" name="end_datetime" id="editEndDatetime"
                                         value="<?= $edit_bug['end_datetime'] ? date('Y-m-d\TH:i', strtotime($edit_bug['end_datetime'])) : '' ?>">
                                 </div>
                             </div>
@@ -1304,12 +1297,12 @@ $statusColors = [
                     <h5 class="modal-title">Update Bug Status</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <form method="POST">
-                    <input type="hidden" name="bug_id" id="update_bug_id">
+                <form method="POST" id="updateBugStatusForm">
+                    <input type="hidden" name="bug_id" id="updateBugId">
                     <div class="modal-body">
                         <div class="mb-3">
                             <label class="form-label">Status</label>
-                            <select class="form-select" name="status" id="update_bug_status" required>
+                            <select class="form-select" name="status" id="updateBugStatus" required>
                                 <option value="open">Open</option>
                                 <option value="in_progress">In Progress</option>
                                 <option value="resolved">Resolved</option>
@@ -1376,19 +1369,19 @@ $statusColors = [
 
             // Remove loading class after page load
             setTimeout(function() {
-                $('.table-wrapper').removeClass('loading');
+                document.querySelector('.table-wrapper').classList.remove('loading');
             }, 300);
         });
 
         function setupEventListeners() {
-            // Form validation
+            // Form validation for create bug
             const createBugForm = document.getElementById('createBugForm');
             if (createBugForm) {
                 createBugForm.addEventListener('submit', function(e) {
                     let isValid = true;
                     const errorMessages = [];
 
-                    const bugName = this.querySelector('input[name="name"]');
+                    const bugName = document.getElementById('bugName');
                     if (!bugName.value.trim()) {
                         isValid = false;
                         errorMessages.push("Bug name is required.");
@@ -1401,7 +1394,7 @@ $statusColors = [
                         bugName.classList.remove('is-invalid');
                     }
 
-                    const projectSelect = this.querySelector('select[name="project_id"]');
+                    const projectSelect = document.getElementById('projectSelect');
                     if (!projectSelect.value) {
                         isValid = false;
                         errorMessages.push("Project selection is required.");
@@ -1410,7 +1403,7 @@ $statusColors = [
                         projectSelect.classList.remove('is-invalid');
                     }
 
-                    const taskSelect = this.querySelector('select[name="task_id"]');
+                    const taskSelect = document.getElementById('taskSelect');
                     if (!taskSelect.value) {
                         isValid = false;
                         errorMessages.push("Task selection is required.");
@@ -1419,7 +1412,7 @@ $statusColors = [
                         taskSelect.classList.remove('is-invalid');
                     }
 
-                    const prioritySelect = this.querySelector('select[name="priority"]');
+                    const prioritySelect = document.getElementById('bugPriority');
                     if (!prioritySelect.value) {
                         isValid = false;
                         errorMessages.push("Priority selection is required.");
@@ -1428,7 +1421,7 @@ $statusColors = [
                         prioritySelect.classList.remove('is-invalid');
                     }
 
-                    const statusSelect = this.querySelector('select[name="status"]');
+                    const statusSelect = document.getElementById('bugStatus');
                     if (!statusSelect.value) {
                         isValid = false;
                         errorMessages.push("Status selection is required.");
@@ -1437,8 +1430,8 @@ $statusColors = [
                         statusSelect.classList.remove('is-invalid');
                     }
 
-                    const startDate = this.querySelector('input[name="start_datetime"]');
-                    const endDate = this.querySelector('input[name="end_datetime"]');
+                    const startDate = document.getElementById('startDatetime');
+                    const endDate = document.getElementById('endDatetime');
 
                     if (startDate.value && endDate.value) {
                         const start = new Date(startDate.value);
@@ -1458,11 +1451,11 @@ $statusColors = [
                     if (!isValid) {
                         e.preventDefault();
 
-                        let alertDiv = document.querySelector('.validation-error-alert');
+                        let alertDiv = createBugForm.querySelector('.validation-error-alert');
                         if (!alertDiv) {
                             alertDiv = document.createElement('div');
                             alertDiv.className = 'alert alert-danger validation-error-alert mt-3';
-                            this.prepend(alertDiv);
+                            createBugForm.prepend(alertDiv);
                         }
 
                         alertDiv.innerHTML = '<strong>Please fix the following errors:</strong><br>' +
@@ -1492,11 +1485,23 @@ $statusColors = [
                     document.querySelector('.table-wrapper').classList.add('loading');
                 });
 
-                // Update task filter when project filter changes
-                const projectFilter = document.getElementById('filter_project');
-                if (projectFilter) {
-                    projectFilter.addEventListener('change', updateTaskFilterOptions);
+                // Update task filter when project filter changes (using DOM event)
+                const filterProject = document.getElementById('filterProject');
+                if (filterProject) {
+                    filterProject.addEventListener('change', updateFilterTaskOptions);
                 }
+            }
+
+            // Create Bug Modal - Project change event
+            const projectSelect = document.getElementById('projectSelect');
+            if (projectSelect) {
+                projectSelect.addEventListener('change', handleCreateProjectChange);
+            }
+
+            // Edit Bug Modal - Project change event
+            const editProjectSelect = document.getElementById('editProjectSelect');
+            if (editProjectSelect) {
+                editProjectSelect.addEventListener('change', handleEditProjectChange);
             }
 
             // Handle attachment deletion
@@ -1518,8 +1523,8 @@ $statusColors = [
                     const bugId = this.dataset.bugId;
                     const currentStatus = this.dataset.currentStatus;
 
-                    document.getElementById('update_bug_id').value = bugId;
-                    document.getElementById('update_bug_status').value = currentStatus;
+                    document.getElementById('updateBugId').value = bugId;
+                    document.getElementById('updateBugStatus').value = currentStatus;
 
                     updateModal.show();
                 });
@@ -1535,22 +1540,12 @@ $statusColors = [
                     }
                 });
             }
-
-            // Project dropdown change listeners
-            const projectSelect = document.getElementById('projectSelect');
-            if (projectSelect) {
-                projectSelect.addEventListener('change', handleCreateProjectChange);
-            }
-
-            const editProjectSelect = document.getElementById('editProjectSelect');
-            if (editProjectSelect) {
-                editProjectSelect.addEventListener('change', handleEditProjectChange);
-            }
         }
 
-        function updateTaskFilterOptions() {
-            const projectId = document.getElementById('filter_project').value;
-            const taskFilter = document.getElementById('filter_task');
+        // Filter form functions
+        function updateFilterTaskOptions() {
+            const projectId = document.getElementById('filterProject').value;
+            const taskFilter = document.getElementById('filterTask');
             
             if (!taskFilter) return;
             
@@ -1593,6 +1588,7 @@ $statusColors = [
             }
         }
 
+        // Create modal functions
         function handleCreateProjectChange() {
             const projectId = this.value;
             const taskSelect = document.getElementById('taskSelect');
