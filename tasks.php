@@ -1333,7 +1333,7 @@ if (isset($_GET['edit_task']) && !isset($_POST['update_task'])) { // Don't load 
                                         </td>
                                         <td>
                                             <div class="btn-group">
-                                                <?php if ($_SESSION['user_role'] == 'manager' || in_array($_SESSION['user_id'], explode(',', $task['assignee_ids'] ?? ''))): ?>
+                                                <?php if ($_SESSION['user_role'] == 'manager' || $_SESSION['user_role'] == 'qa' || in_array($_SESSION['user_id'], explode(',', $task['assignee_ids'] ?? ''))): ?>
                                                     <button class="btn btn-sm btn-outline-warning update-task-status"
                                                         data-task-id="<?= $task['id'] ?>"
                                                         data-current-status="<?= $task['status'] ?>">
